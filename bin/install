@@ -14,13 +14,38 @@ mkdir -p "$PLUGIN_DIR/accounts"
 mkdir -p "$PLUGIN_DIR/logs"
 
 # Check if plugin is already installed
-if [ -f "$PLUGIN_DIR/plugin.conf" ]; then
+if [ -f "$PLUGIN_DIR/config.json" ]; then
     echo "-----> Let's Encrypt plugin is already installed"
     echo "       Plugin directory: $PLUGIN_DIR"
     exit 0
 fi
 
+# Migrate old installations that only have plugin.conf
+if [ -f "$PLUGIN_DIR/plugin.conf" ] && [ ! -f "$PLUGIN_DIR/config.json" ]; then
+    echo "-----> Migrating old installation..."
+    cat > "$PLUGIN_DIR/config.json" << EOF
+{
+    "name": "letsencrypt",
+    "type": "ssl",
+    "version": "1.0.0",
+    "description": "Let's Encrypt SSL certificate management plugin for Gokku"
+}
+EOF
+    echo "-----> Migration complete"
+    exit 0
+fi
+
 # Create plugin configuration
+cat > "$PLUGIN_DIR/config.json" << EOF
+{
+    "name": "letsencrypt",
+    "type": "ssl",
+    "version": "1.0.0",
+    "description": "Let's Encrypt SSL certificate management plugin for Gokku"
+}
+EOF
+
+# Create plugin.conf for internal use
 cat > "$PLUGIN_DIR/plugin.conf" << EOF
 {
     "plugin_name": "letsencrypt",

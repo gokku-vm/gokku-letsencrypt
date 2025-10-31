@@ -58,7 +58,8 @@ gokku letsencrypt:link-nginx nginx-lb
 │       └── privkey.pem       # Private key
 ├── accounts/                 # Let's Encrypt accounts
 ├── logs/                     # Certificate logs
-├── plugin.conf               # Plugin configuration
+├── config.json               # Gokku plugin configuration
+├── plugin.conf               # Internal plugin configuration
 ├── nginx-services            # List of linked nginx services
 └── renew-certificates.sh     # Renewal script
 ```

@@ -63,7 +63,19 @@ fi
 
 # Remove plugin directory
 echo "-----> Removing plugin directory: $PLUGIN_DIR"
-rm -rf "$PLUGIN_DIR"
+
+# Check for files with root ownership (created by certbot in Docker containers)
+if [ -d "$PLUGIN_DIR/logs" ]; then
+    if ls -la "$PLUGIN_DIR/logs" | grep -q "root root"; then
+        echo "-----> Detected files owned by root in logs directory"
+        echo "       Using sudo to remove..."
+        sudo rm -rf "$PLUGIN_DIR"
+    else
+        rm -rf "$PLUGIN_DIR"
+    fi
+else
+    rm -rf "$PLUGIN_DIR"
+fi
 
 echo "-----> Let's Encrypt plugin uninstalled successfully"
 echo "       All certificates, configurations, and cron jobs removed"
