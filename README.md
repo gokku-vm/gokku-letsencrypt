@@ -77,9 +77,6 @@ The plugin automatically sets up a scheduled job during installation that runs d
 
 ### Basic Setup
 ```bash
-# Install plugin (once, auto-renewal included)
-gokku letsencrypt:install
-
 # Create certificate
 gokku letsencrypt:create example.com contact@example.com
 
@@ -133,7 +130,7 @@ All services need to run under a single domain with automatic HTTPS enabled.
 gokku plugin:add nginx
 
 # Create nginx service for load balancing
-gokku nginx:create nginx-lb
+gokku services:create nginx --name nginx-lb
 
 # Add applications and configure routing
 gokku nginx:add-domain nginx-lb frontend-app myapp.com
@@ -145,9 +142,6 @@ gokku nginx:add-domain nginx-lb admin-panel admin.myapp.com
 
 ```bash
 gokku plugin:add letsencrypt
-
-# Install Let's Encrypt plugin (once, auto-renewal enabled by default)
-gokku letsencrypt:install
 
 # Create SSL certificates for all domains
 gokku letsencrypt:create myapp.com admin@myapp.com
@@ -181,7 +175,7 @@ gokku plugin:add letsencrypt
 gokku plugin:add nginx
 
 # 2. Create nginx service
-gokku nginx:create production-lb
+gokku services:create nginx --name production-lb
 
 # 3. Deploy applications
 gokku deploy frontend-app

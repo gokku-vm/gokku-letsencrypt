@@ -55,6 +55,8 @@ docker run --rm \
     -v "$PLUGIN_DIR/certs:/etc/letsencrypt/live" \
     -v "$PLUGIN_DIR/accounts:/etc/letsencrypt/accounts" \
     -v "$PLUGIN_DIR/logs:/var/log/letsencrypt" \
+    -p 8880:80 \
+    -p 8443:443 \
     certbot/certbot renew \
     --config-dir "/etc/letsencrypt/accounts" \
     --work-dir "/etc/letsencrypt" \
