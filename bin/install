@@ -13,6 +13,9 @@ mkdir -p "$PLUGIN_DIR/certs"
 mkdir -p "$PLUGIN_DIR/accounts"
 mkdir -p "$PLUGIN_DIR/logs"
 
+sudo chown -R "$(whoami):$(whoami)" "$PLUGIN_DIR" 2>/dev/null || true
+sudo chmod -R 755 "$PLUGIN_DIR" 2>/dev/null || true
+
 # Check if plugin is already installed
 if [ -f "$PLUGIN_DIR/config.json" ]; then
     echo "-----> Let's Encrypt plugin is already installed"
@@ -60,137 +63,25 @@ cat > "$PLUGIN_DIR/plugin.conf" << EOF
 }
 EOF
 
-# Create renewal script
-cat > "$PLUGIN_DIR/renew-certificates.sh" << 'EOF'
-#!/bin/bash
-
-# Let's Encrypt certificate renewal script
-PLUGIN_DIR="/opt/gokku/plugins/letsencrypt"
-
-echo "$(date): Starting certificate renewal for Let's Encrypt plugin"
-
-# Check if plugin directory exists
-if [ ! -d "$PLUGIN_DIR" ]; then
-    echo "$(date): Plugin directory not found: $PLUGIN_DIR"
-    exit 1
-fi
-
-# Find and temporarily stop nginx containers that are using port 80
-CONTAINERS_TO_RESTART=()
-for container in $(docker ps --format "{{.Names}}"); do
-    if docker port "$container" 2>/dev/null | grep -qE ":80/"; then
-        docker stop "$container" > /dev/null 2>&1
-        CONTAINERS_TO_RESTART+=("$container")
-    fi
-done
-
-# Renew certificates using certbot (HTTP-01 validation only needs port 80)
-docker run --rm \
-    -v "$PLUGIN_DIR:/etc/letsencrypt" \
-    -v "$PLUGIN_DIR/logs:/var/log/letsencrypt" \
-    -p 80:80 \
-    certbot/certbot renew \
-    --preferred-challenges http \
-    --config-dir "/etc/letsencrypt" \
-    --work-dir "/etc/letsencrypt" \
-    --logs-dir "/var/log/letsencrypt" \
-    --non-interactive \
-    --quiet
-
-RENEW_EXIT_CODE=$?
-
-# Restart containers that were temporarily stopped
-for container in "${CONTAINERS_TO_RESTART[@]}"; do
-    docker start "$container" > /dev/null 2>&1
-done
-
-# Fix permissions for files created by certbot (root in Docker)
-if [ -d "$PLUGIN_DIR" ]; then
-    if ! chmod -R u+rwX "$PLUGIN_DIR" 2>/dev/null; then
-        sudo chown -R "$(whoami):$(whoami)" "$PLUGIN_DIR" 2>/dev/null || true
-        chmod -R 755 "$PLUGIN_DIR" 2>/dev/null || true
-    fi
-fi
-
-if [ $RENEW_EXIT_CODE -eq 0 ]; then
-    echo "$(date): Certificate renewal completed successfully"
-
-    # Copy renewed certificates from live/ to certs/ directory
-    if [ -d "$PLUGIN_DIR/live" ]; then
-        for domain_dir in "$PLUGIN_DIR/live"/*; do
-            if [ -d "$domain_dir" ]; then
-                domain=$(basename "$domain_dir")
-                mkdir -p "$PLUGIN_DIR/certs/$domain"
-                if [ -f "$domain_dir/fullchain.pem" ]; then
-                    cp -Lf "$domain_dir/fullchain.pem" "$PLUGIN_DIR/certs/$domain/" 2>/dev/null || sudo cp -Lf "$domain_dir/fullchain.pem" "$PLUGIN_DIR/certs/$domain/" 2>/dev/null
-                fi
-                if [ -f "$domain_dir/privkey.pem" ]; then
-                    cp -Lf "$domain_dir/privkey.pem" "$PLUGIN_DIR/certs/$domain/" 2>/dev/null || sudo cp -Lf "$domain_dir/privkey.pem" "$PLUGIN_DIR/certs/$domain/" 2>/dev/null
-                fi
-            fi
-        done
-    fi
-
-    # Update certificate symlinks for all linked nginx services
-    if [ -f "$PLUGIN_DIR/nginx-services" ]; then
-        while read -r nginx_service; do
-            if [ -n "$nginx_service" ]; then
-                NGINX_DIR="/opt/gokku/services/$nginx_service"
-                NGINX_SSL_DIR="$NGINX_DIR/ssl"
-
-                if [ -d "$NGINX_DIR" ] && [ -d "$NGINX_SSL_DIR" ] && [ -d "$PLUGIN_DIR/certs" ]; then
-                    echo "$(date): Updating certificate symlinks for nginx service: $nginx_service"
-                    for domain_dir in "$PLUGIN_DIR/certs"/*; do
-                        if [ -d "$domain_dir" ]; then
-                            domain=$(basename "$domain_dir")
-                            if [ -f "$domain_dir/fullchain.pem" ] && [ -f "$domain_dir/privkey.pem" ]; then
-                                ln -sf "$domain_dir/fullchain.pem" "$NGINX_SSL_DIR/$domain.crt"
-                                ln -sf "$domain_dir/privkey.pem" "$NGINX_SSL_DIR/$domain.key"
-                            fi
-                        fi
-                    done
-                    echo "$(date): Certificate symlinks updated for $nginx_service"
-                fi
-            fi
-        done < "$PLUGIN_DIR/nginx-services"
-    fi
-else
-    echo "$(date): Certificate renewal failed"
-    exit 1
-fi
-EOF
-
-chmod +x "$PLUGIN_DIR/renew-certificates.sh"
-
-# Set proper permissions (ignore errors if files are owned by root)
+# Set proper permissions
 chmod -R 755 "$PLUGIN_DIR" 2>/dev/null || true
 
 # Pull certbot image
 echo "-----> Pulling certbot Docker image..."
-docker pull certbot/certbot:latest
-
-# Setup auto-renewal by default
-echo "-----> Setting up auto-renewal..."
-CRON_FILE="/etc/cron.d/gokku-letsencrypt"
-cat > "$CRON_FILE" << EOF
-# Auto-renewal for Let's Encrypt plugin
-# Runs every day at 2:30 AM
-30 2 * * * root $PLUGIN_DIR/renew-certificates.sh >> /var/log/gokku-letsencrypt.log 2>&1
-EOF
-
-chmod 644 "$CRON_FILE"
+docker pull certbot/certbot:latest 2>/dev/null || true
 
 echo "-----> Let's Encrypt plugin installed successfully"
 echo "       Plugin directory: $PLUGIN_DIR"
 echo "       Certificates: $PLUGIN_DIR/certs"
 echo "       Accounts: $PLUGIN_DIR/accounts"
 echo "       Logs: $PLUGIN_DIR/logs"
-echo "       Auto-renewal: Enabled (daily at 2:30 AM)"
 echo ""
 echo "-----> Next steps:"
-echo "       1. Create certificate: gokku letsencrypt:create <domain> [email]"
-echo "       2. Link to nginx: gokku letsencrypt:link-nginx <nginx-service>"
+echo "       1. Create certificate: gokku letsencrypt:create <domain> <email>"
+echo "       2. Setup auto-renewal: gokku letsencrypt:auto-renew"
+echo "       3. Link to nginx: gokku letsencrypt:link-nginx <nginx-service>"
 echo ""
 echo "-----> Example usage:"
 echo "       gokku letsencrypt:create example.com contact@example.com"
+echo "       gokku letsencrypt:auto-renew"
 echo "       gokku letsencrypt:link-nginx nginx-lb"
