@@ -179,6 +179,7 @@ gokku plugin:add nginx
 
 # 2. Create nginx service
 gokku services:create nginx --name production-lb
+gokku letsencrypt:link-nginx production-lb
 
 # 3. Deploy applications
 gokku deploy frontend-app
@@ -194,7 +195,6 @@ gokku nginx:add-domain production-lb admin-panel admin.example.com
 gokku letsencrypt:create example.com contact@example.com
 gokku letsencrypt:create api.example.com
 gokku letsencrypt:create admin.example.com
-gokku letsencrypt:link-nginx production-lb
 
 # Done! Application running with automatic HTTPS
 ```
