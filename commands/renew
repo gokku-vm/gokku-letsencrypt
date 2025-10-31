@@ -33,17 +33,38 @@ fi
 # Renew certificates using certbot
 echo "-----> Starting certificate renewal process..."
 
+# Find and temporarily stop nginx containers that are using port 80
+CONTAINERS_TO_RESTART=()
+for container in $(docker ps --format "{{.Names}}"); do
+    if docker port "$container" 2>/dev/null | grep -qE ":80/"; then
+        echo "       Temporarily stopping container: $container"
+        docker stop "$container" > /dev/null 2>&1
+        CONTAINERS_TO_RESTART+=("$container")
+    fi
+done
+
 docker run --rm \
     -v "$SERVICE_DIR/certs:/etc/letsencrypt/certs" \
     -v "$SERVICE_DIR/accounts:/etc/letsencrypt/accounts" \
     -v "$SERVICE_DIR/logs:/var/log/letsencrypt" \
+    -p 80:80 \
     certbot/certbot renew \
+    --preferred-challenges http \
     --config-dir "/etc/letsencrypt/accounts" \
     --cert-path "/etc/letsencrypt/certs" \
     --non-interactive \
     --quiet
 
 RENEWAL_EXIT_CODE=$?
+
+# Restart containers that were temporarily stopped
+if [ ${#CONTAINERS_TO_RESTART[@]} -gt 0 ]; then
+    echo "-----> Restarting temporarily stopped containers..."
+    for container in "${CONTAINERS_TO_RESTART[@]}"; do
+        echo "       Restarting: $container"
+        docker start "$container" > /dev/null 2>&1
+    done
+fi
 
 if [ $RENEWAL_EXIT_CODE -eq 0 ]; then
     echo "-----> Certificate renewal completed successfully"

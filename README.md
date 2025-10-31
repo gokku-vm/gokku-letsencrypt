@@ -73,6 +73,8 @@ When linked to nginx, the plugin automatically:
 ### Auto-renewal
 The plugin automatically sets up a scheduled job during installation that runs daily at 2:30 AM to check and renew certificates that are expiring within 30 days. No additional configuration needed!
 
+**Note**: During certificate renewal, the plugin temporarily stops containers using port 80 for a few seconds (HTTPS traffic on port 443 remains unaffected). This happens automatically at 2:30 AM and only when certificates actually need renewal (within 30 days of expiry).
+
 ## Examples
 
 ### Basic Setup

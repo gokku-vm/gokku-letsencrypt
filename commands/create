@@ -44,15 +44,30 @@ fi
 # Create certificate using certbot
 echo "-----> Requesting certificate from Let's Encrypt..."
 
-# Use standalone mode for initial certificate
+# Find and temporarily stop nginx containers that are using port 80
+CONTAINERS_TO_RESTART=()
+echo "-----> Checking for containers on port 80..."
+
+# Find containers exposing port 80 (HTTP-01 validation only needs port 80)
+for container in $(docker ps --format "{{.Names}}"); do
+    # Check if container is exposing port 80
+    if docker port "$container" 2>/dev/null | grep -qE ":80/"; then
+        echo "-----> Found container using port 80: $container"
+        echo "       Temporarily stopping for certificate generation..."
+        docker stop "$container" > /dev/null 2>&1
+        CONTAINERS_TO_RESTART+=("$container")
+    fi
+done
+
+# Use standalone mode for initial certificate (HTTP-01 validation only needs port 80)
 docker run --rm \
     -v "$PLUGIN_DIR/certs:/etc/letsencrypt/live" \
     -v "$PLUGIN_DIR/accounts:/etc/letsencrypt/accounts" \
     -v "$PLUGIN_DIR/logs:/var/log/letsencrypt" \
-    -p 8880:80 \
-    -p 8443:443 \
+    -p 80:80 \
     certbot/certbot certonly \
     --standalone \
+    --preferred-challenges http \
     --non-interactive \
     --agree-tos \
     --email "$EMAIL" \
@@ -61,7 +76,18 @@ docker run --rm \
     --work-dir "/etc/letsencrypt" \
     --logs-dir "/var/log/letsencrypt"
 
-if [ $? -eq 0 ]; then
+CERT_EXIT_CODE=$?
+
+# Restart containers that were temporarily stopped
+if [ ${#CONTAINERS_TO_RESTART[@]} -gt 0 ]; then
+    echo "-----> Restarting temporarily stopped containers..."
+    for container in "${CONTAINERS_TO_RESTART[@]}"; do
+        echo "       Restarting: $container"
+        docker start "$container" > /dev/null 2>&1
+    done
+fi
+
+if [ $CERT_EXIT_CODE -eq 0 ]; then
     echo "-----> Certificate created successfully"
     echo "       Domain: $DOMAIN"
     echo "       Certificate: $PLUGIN_DIR/certs/$DOMAIN/fullchain.pem"

@@ -34,19 +34,37 @@ if [ ! -d "$PLUGIN_DIR" ]; then
     exit 1
 fi
 
-# Renew certificates using certbot
+# Find and temporarily stop nginx containers that are using port 80
+CONTAINERS_TO_RESTART=()
+for container in $(docker ps --format "{{.Names}}"); do
+    if docker port "$container" 2>/dev/null | grep -qE ":80/"; then
+        docker stop "$container" > /dev/null 2>&1
+        CONTAINERS_TO_RESTART+=("$container")
+    fi
+done
+
+# Renew certificates using certbot (HTTP-01 validation only needs port 80)
 docker run --rm \
     -v "$PLUGIN_DIR/certs:/etc/letsencrypt/live" \
     -v "$PLUGIN_DIR/accounts:/etc/letsencrypt/accounts" \
     -v "$PLUGIN_DIR/logs:/var/log/letsencrypt" \
+    -p 80:80 \
     certbot/certbot renew \
+    --preferred-challenges http \
     --config-dir "/etc/letsencrypt/accounts" \
     --work-dir "/etc/letsencrypt" \
     --logs-dir "/var/log/letsencrypt" \
     --non-interactive \
     --quiet
 
-if [ $? -eq 0 ]; then
+RENEW_EXIT_CODE=$?
+
+# Restart containers that were temporarily stopped
+for container in "${CONTAINERS_TO_RESTART[@]}"; do
+    docker start "$container" > /dev/null 2>&1
+done
+
+if [ $RENEW_EXIT_CODE -eq 0 ]; then
     echo "$(date): Certificate renewal completed successfully"
 
     # Update certificate symlinks for all linked nginx services
