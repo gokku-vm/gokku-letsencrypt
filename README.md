@@ -244,13 +244,24 @@ Internet Request
 - Docker (for certbot container)
 - Nginx service (for SSL configuration)
 - Valid domain pointing to your server
-- Ports 80 and 443 accessible
+- Ports 80 and 443 accessible from the internet
+
+### Network Requirements
+
+**IMPORTANT**: The Let's Encrypt validation requires external internet access to your server on port 80. Make sure:
+- Port 80 is open in your firewall (ufw/iptables)
+- If using AWS EC2: Port 80 is open in your security group for inbound HTTP traffic from `0.0.0.0/0`
+- If using other cloud providers: Ensure port 80 allows inbound traffic
+- DNS properly resolves your domain to the server's public IP
 
 ## Troubleshooting
 
 ### Certificate Creation Fails
 - Ensure domain points to your server
-- Check that ports 80 and 443 are accessible
+- Check that ports 80 and 443 are accessible from the internet
+  - **AWS EC2**: Open ports 80 and 443 in your security group
+  - **Firewall**: Ensure ufw/iptables allow inbound traffic on ports 80/443
+  - Test with: `curl -I http://your-domain.com`
 - Verify email address is valid
 - Check logs: `gokku letsencrypt:logs`
 

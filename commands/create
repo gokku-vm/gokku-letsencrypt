@@ -33,12 +33,24 @@ fi
 mkdir -p "$PLUGIN_DIR/certs"
 mkdir -p "$PLUGIN_DIR/accounts"
 
-# Check if certificate already exists
+# Check if certificate already exists (in certs/ or live/)
 if [ -d "$PLUGIN_DIR/certs/$DOMAIN" ] && [ -f "$PLUGIN_DIR/certs/$DOMAIN/fullchain.pem" ]; then
     echo "-----> Certificate for $DOMAIN already exists"
     echo "       Certificate: $PLUGIN_DIR/certs/$DOMAIN/fullchain.pem"
     echo "       Private key: $PLUGIN_DIR/certs/$DOMAIN/privkey.pem"
     exit 0
+fi
+
+# Also check if it exists in live/ but not in certs/
+if [ -d "$PLUGIN_DIR/live/$DOMAIN" ] && [ ! -d "$PLUGIN_DIR/certs/$DOMAIN" ]; then
+    echo "-----> Certificate exists in live/ directory, copying to certs/"
+    mkdir -p "$PLUGIN_DIR/certs/$DOMAIN"
+    cp -f "$PLUGIN_DIR/live/$DOMAIN/fullchain.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null
+    cp -f "$PLUGIN_DIR/live/$DOMAIN/privkey.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null
+    if [ -f "$PLUGIN_DIR/certs/$DOMAIN/fullchain.pem" ]; then
+        echo "-----> Certificate for $DOMAIN already exists"
+        exit 0
+    fi
 fi
 
 # Create certificate using certbot
@@ -61,8 +73,7 @@ done
 
 # Use standalone mode for initial certificate (HTTP-01 validation only needs port 80)
 docker run --rm \
-    -v "$PLUGIN_DIR/certs:/etc/letsencrypt/live" \
-    -v "$PLUGIN_DIR/accounts:/etc/letsencrypt/accounts" \
+    -v "$PLUGIN_DIR:/etc/letsencrypt" \
     -v "$PLUGIN_DIR/logs:/var/log/letsencrypt" \
     -p 80:80 \
     certbot/certbot certonly \
@@ -72,7 +83,7 @@ docker run --rm \
     --agree-tos \
     --email "$EMAIL" \
     --domains "$DOMAIN" \
-    --config-dir "/etc/letsencrypt/accounts" \
+    --config-dir "/etc/letsencrypt" \
     --work-dir "/etc/letsencrypt" \
     --logs-dir "/var/log/letsencrypt"
 
@@ -89,9 +100,16 @@ fi
 
 if [ $CERT_EXIT_CODE -eq 0 ]; then
     echo "-----> Certificate created successfully"
-    echo "       Domain: $DOMAIN"
-    echo "       Certificate: $PLUGIN_DIR/certs/$DOMAIN/fullchain.pem"
-    echo "       Private key: $PLUGIN_DIR/certs/$DOMAIN/privkey.pem"
+    
+    # Move certificates from live/ to certs/ directory structure
+    if [ -d "$PLUGIN_DIR/live/$DOMAIN" ]; then
+        mkdir -p "$PLUGIN_DIR/certs/$DOMAIN"
+        cp -f "$PLUGIN_DIR/live/$DOMAIN/fullchain.pem" "$PLUGIN_DIR/certs/$DOMAIN/"
+        cp -f "$PLUGIN_DIR/live/$DOMAIN/privkey.pem" "$PLUGIN_DIR/certs/$DOMAIN/"
+        echo "       Domain: $DOMAIN"
+        echo "       Certificate: $PLUGIN_DIR/certs/$DOMAIN/fullchain.pem"
+        echo "       Private key: $PLUGIN_DIR/certs/$DOMAIN/privkey.pem"
+    fi
 
     # Update plugin configuration
     if [ -f "$PLUGIN_DIR/plugin.conf" ]; then

@@ -45,13 +45,12 @@ done
 
 # Renew certificates using certbot (HTTP-01 validation only needs port 80)
 docker run --rm \
-    -v "$PLUGIN_DIR/certs:/etc/letsencrypt/live" \
-    -v "$PLUGIN_DIR/accounts:/etc/letsencrypt/accounts" \
+    -v "$PLUGIN_DIR:/etc/letsencrypt" \
     -v "$PLUGIN_DIR/logs:/var/log/letsencrypt" \
     -p 80:80 \
     certbot/certbot renew \
     --preferred-challenges http \
-    --config-dir "/etc/letsencrypt/accounts" \
+    --config-dir "/etc/letsencrypt" \
     --work-dir "/etc/letsencrypt" \
     --logs-dir "/var/log/letsencrypt" \
     --non-interactive \
@@ -66,6 +65,22 @@ done
 
 if [ $RENEW_EXIT_CODE -eq 0 ]; then
     echo "$(date): Certificate renewal completed successfully"
+
+    # Copy renewed certificates from live/ to certs/ directory
+    if [ -d "$PLUGIN_DIR/live" ]; then
+        for domain_dir in "$PLUGIN_DIR/live"/*; do
+            if [ -d "$domain_dir" ]; then
+                domain=$(basename "$domain_dir")
+                mkdir -p "$PLUGIN_DIR/certs/$domain"
+                if [ -f "$domain_dir/fullchain.pem" ]; then
+                    cp -f "$domain_dir/fullchain.pem" "$PLUGIN_DIR/certs/$domain/"
+                fi
+                if [ -f "$domain_dir/privkey.pem" ]; then
+                    cp -f "$domain_dir/privkey.pem" "$PLUGIN_DIR/certs/$domain/"
+                fi
+            fi
+        done
+    fi
 
     # Update certificate symlinks for all linked nginx services
     if [ -f "$PLUGIN_DIR/nginx-services" ]; then
