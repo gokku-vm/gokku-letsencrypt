@@ -110,6 +110,138 @@ gokku letsencrypt:renew
 gokku letsencrypt:status
 ```
 
+## Real-World Use Case: Multi-Service Application with HTTPS
+
+This example demonstrates how to use `gokku-letsencrypt` together with `gokku-nginx` to deploy a production-ready multi-service application with automatic SSL certificate management.
+
+### Scenario
+
+You have a multi-service application consisting of:
+- **Frontend Application** (React/Vue/Angular)
+- **Backend API** (Node.js/Python/Ruby)
+- **Admin Panel** (Dashboard application)
+- **API Gateway** (Routing service)
+
+All services need to run under a single domain with automatic HTTPS enabled.
+
+### Step-by-Step Setup
+
+#### 1. Install and Configure gokku-nginx
+
+```bash
+# Install nginx plugin
+gokku plugin:add nginx
+
+# Create nginx service for load balancing
+gokku nginx:create nginx-lb
+
+# Add applications and configure routing
+gokku nginx:add-domain nginx-lb frontend-app myapp.com
+gokku nginx:add-domain nginx-lb api-backend api.myapp.com
+gokku nginx:add-domain nginx-lb admin-panel admin.myapp.com
+```
+
+#### 2. Install and Configure gokku-letsencrypt
+
+```bash
+gokku plugin:add letsencrypt
+
+# Install Let's Encrypt plugin (once, auto-renewal enabled by default)
+gokku letsencrypt:install
+
+# Create SSL certificates for all domains
+gokku letsencrypt:create myapp.com admin@myapp.com
+gokku letsencrypt:create api.myapp.com
+gokku letsencrypt:create admin.myapp.com
+
+# Link certificates to nginx service
+gokku letsencrypt:link-nginx nginx-lb
+```
+
+#### 3. Automatic Integration Result
+
+After linking, `gokku-letsencrypt` automatically:
+
+- Creates certificate symlinks in `/opt/gokku/services/nginx-lb/ssl/`
+- Makes certificates available to nginx for each domain:
+  - `myapp.com.crt` / `myapp.com.key`
+  - `api.myapp.com.crt` / `api.myapp.com.key`
+  - `admin.myapp.com.crt` / `admin.myapp.com.key`
+- Configures HTTPS server blocks in nginx
+- Sets up HTTP to HTTPS redirects
+- Applies security headers
+
+#### 4. Complete Deployment Flow
+
+```bash
+# Complete setup for a new application
+
+# 1. Install plugins (one time only)
+gokku plugin:add letsencrypt
+gokku plugin:add nginx
+
+# 2. Create nginx service
+gokku nginx:create production-lb
+
+# 3. Deploy applications
+gokku deploy frontend-app
+gokku deploy api-backend
+gokku deploy admin-panel
+
+# 4. Configure nginx routing
+gokku nginx:add-domain production-lb frontend-app example.com
+gokku nginx:add-domain production-lb api-backend api.example.com
+gokku nginx:add-domain production-lb admin-panel admin.example.com
+
+# 5. Add SSL (certificates created and linked automatically)
+gokku letsencrypt:create example.com contact@example.com
+gokku letsencrypt:create api.example.com
+gokku letsencrypt:create admin.example.com
+gokku letsencrypt:link-nginx production-lb
+
+# Done! Application running with automatic HTTPS
+```
+
+#### 5. Verification and Maintenance
+
+```bash
+# Verify certificate status
+gokku letsencrypt:list
+gokku letsencrypt:info myapp.com
+
+# Verify nginx configuration
+gokku nginx:test nginx-lb
+
+# Manually renew certificates if needed
+gokku letsencrypt:renew
+
+# View certificate logs
+gokku letsencrypt:logs
+```
+
+### Architecture Diagram
+
+```
+Internet Request
+    ↓
+[Port 443 HTTPS] ← Let's Encrypt Certificate (gokku-letsencrypt)
+    ↓
+[Nginx Load Balancer] ← gokku-nginx
+    ↓
+┌─────────────────┬─────────────────┬─────────────────┐
+│  Frontend App   │   API Backend   │   Admin Panel   │
+│  (myapp.com)    │ (api.myapp.com) │ (admin.myapp...)│
+└─────────────────┴─────────────────┴─────────────────┘
+```
+
+### Integration Benefits
+
+1. **Automation**: Certificates are automatically created and renewed
+2. **Seamless Integration**: Certificates automatically linked to nginx configuration
+3. **Security by Default**: HTTPS enabled with automatic HTTP to HTTPS redirects
+4. **Multi-Domain Support**: Multiple domains configured with a single command each
+5. **Zero Maintenance**: Automatic daily renewal checks for expiring certificates
+
 ## Requirements
 
 - Docker (for certbot container)
