@@ -104,6 +104,10 @@ for container in "${CONTAINERS_TO_RESTART[@]}"; do
     docker start "$container" > /dev/null 2>&1
 done
 
+# Fix permissions for files created by certbot (root in Docker)
+# Note: chmod on root-owned files will fail silently, which is OK
+chmod -R u+rwX "$PLUGIN_DIR" 2>/dev/null || true
+
 if [ $RENEW_EXIT_CODE -eq 0 ]; then
     echo "$(date): Certificate renewal completed successfully"
 
@@ -114,10 +118,10 @@ if [ $RENEW_EXIT_CODE -eq 0 ]; then
                 domain=$(basename "$domain_dir")
                 mkdir -p "$PLUGIN_DIR/certs/$domain"
                 if [ -f "$domain_dir/fullchain.pem" ]; then
-                    cp -f "$domain_dir/fullchain.pem" "$PLUGIN_DIR/certs/$domain/"
+                    cp -f "$domain_dir/fullchain.pem" "$PLUGIN_DIR/certs/$domain/" 2>/dev/null || sudo cp -f "$domain_dir/fullchain.pem" "$PLUGIN_DIR/certs/$domain/" 2>/dev/null
                 fi
                 if [ -f "$domain_dir/privkey.pem" ]; then
-                    cp -f "$domain_dir/privkey.pem" "$PLUGIN_DIR/certs/$domain/"
+                    cp -f "$domain_dir/privkey.pem" "$PLUGIN_DIR/certs/$domain/" 2>/dev/null || sudo cp -f "$domain_dir/privkey.pem" "$PLUGIN_DIR/certs/$domain/" 2>/dev/null
                 fi
             fi
         done
@@ -154,8 +158,8 @@ EOF
 
 chmod +x "$PLUGIN_DIR/renew-certificates.sh"
 
-# Set proper permissions
-chmod -R 755 "$PLUGIN_DIR"
+# Set proper permissions (ignore errors if files are owned by root)
+chmod -R 755 "$PLUGIN_DIR" 2>/dev/null || true
 
 # Pull certbot image
 echo "-----> Pulling certbot Docker image..."

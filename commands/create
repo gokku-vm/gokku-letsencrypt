@@ -45,8 +45,8 @@ fi
 if [ -d "$PLUGIN_DIR/live/$DOMAIN" ] && [ ! -d "$PLUGIN_DIR/certs/$DOMAIN" ]; then
     echo "-----> Certificate exists in live/ directory, copying to certs/"
     mkdir -p "$PLUGIN_DIR/certs/$DOMAIN"
-    cp -f "$PLUGIN_DIR/live/$DOMAIN/fullchain.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null
-    cp -f "$PLUGIN_DIR/live/$DOMAIN/privkey.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null
+    cp -f "$PLUGIN_DIR/live/$DOMAIN/fullchain.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null || sudo cp -f "$PLUGIN_DIR/live/$DOMAIN/fullchain.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null
+    cp -f "$PLUGIN_DIR/live/$DOMAIN/privkey.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null || sudo cp -f "$PLUGIN_DIR/live/$DOMAIN/privkey.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null
     if [ -f "$PLUGIN_DIR/certs/$DOMAIN/fullchain.pem" ]; then
         echo "-----> Certificate for $DOMAIN already exists"
         exit 0
@@ -98,14 +98,18 @@ if [ ${#CONTAINERS_TO_RESTART[@]} -gt 0 ]; then
     done
 fi
 
+# Fix permissions for files created by certbot (root in Docker)
+# Note: chmod on root-owned files will fail silently, which is OK
+chmod -R u+rwX "$PLUGIN_DIR" 2>/dev/null || true
+
 if [ $CERT_EXIT_CODE -eq 0 ]; then
     echo "-----> Certificate created successfully"
     
     # Move certificates from live/ to certs/ directory structure
     if [ -d "$PLUGIN_DIR/live/$DOMAIN" ]; then
         mkdir -p "$PLUGIN_DIR/certs/$DOMAIN"
-        cp -f "$PLUGIN_DIR/live/$DOMAIN/fullchain.pem" "$PLUGIN_DIR/certs/$DOMAIN/"
-        cp -f "$PLUGIN_DIR/live/$DOMAIN/privkey.pem" "$PLUGIN_DIR/certs/$DOMAIN/"
+        cp -f "$PLUGIN_DIR/live/$DOMAIN/fullchain.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null || sudo cp -f "$PLUGIN_DIR/live/$DOMAIN/fullchain.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null
+        cp -f "$PLUGIN_DIR/live/$DOMAIN/privkey.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null || sudo cp -f "$PLUGIN_DIR/live/$DOMAIN/privkey.pem" "$PLUGIN_DIR/certs/$DOMAIN/" 2>/dev/null
         echo "       Domain: $DOMAIN"
         echo "       Certificate: $PLUGIN_DIR/certs/$DOMAIN/fullchain.pem"
         echo "       Private key: $PLUGIN_DIR/certs/$DOMAIN/privkey.pem"
