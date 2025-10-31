@@ -43,18 +43,7 @@ for service_dir in /opt/gokku/services/*; do
                         fi
                     done
 
-                    # Test nginx configuration
-                    if container_exists "$nginx_service" && container_is_running "$nginx_service"; then
-                        echo "-----> Testing nginx configuration..."
-                        if docker exec "$nginx_service" nginx -t; then
-                            echo "-----> Reloading nginx..."
-                            docker exec "$nginx_service" nginx -s reload
-                            echo "       Nginx reloaded successfully"
-                        else
-                            echo "-----> Nginx configuration test failed"
-                            echo "       Please check nginx configuration manually"
-                        fi
-                    fi
+                    echo "       Certificate symlinks updated for nginx service"
                 fi
             fi
         fi

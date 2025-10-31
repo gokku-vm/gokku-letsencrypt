@@ -85,19 +85,22 @@ if [ -f "$SERVICE_DIR/nginx-service" ]; then
     nginx_service=$(cat "$SERVICE_DIR/nginx-service")
     echo "-----> Nginx integration: Linked to $nginx_service"
 
-    # Check if nginx service is running
-    if container_exists "$nginx_service" && container_is_running "$nginx_service"; then
-        echo "       Nginx status: Running"
-
-        # Test nginx configuration
-        if docker exec "$nginx_service" nginx -t; then
-            echo "       Nginx configuration: Valid"
+    # Check certificate symlinks
+    NGINX_SSL_DIR="/opt/gokku/services/$nginx_service/ssl"
+    if [ -d "$NGINX_SSL_DIR" ]; then
+        symlink_count=0
+        for cert_file in "$NGINX_SSL_DIR"/*.crt; do
+            if [ -L "$cert_file" ]; then
+                symlink_count=$((symlink_count + 1))
+            fi
+        done
+        if [ $symlink_count -gt 0 ]; then
+            echo "       Certificate symlinks: $symlink_count linked"
         else
-            echo "       Nginx configuration: Invalid"
-            echo "       Please check nginx configuration manually"
+            echo "       Certificate symlinks: None"
         fi
     else
-        echo "       Nginx status: Not running"
+        echo "       SSL directory: Not found"
     fi
 else
     echo "-----> Nginx integration: Not linked"

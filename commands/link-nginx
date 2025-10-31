@@ -50,16 +50,29 @@ if [ -d "$PLUGIN_DIR/certs" ]; then
             # Create symlinks for nginx
             ln -sf "$domain_dir/fullchain.pem" "$NGINX_SSL_DIR/$domain.crt"
             ln -sf "$domain_dir/privkey.pem" "$NGINX_SSL_DIR/$domain.key"
+        fi
+    done
 
-            # Create nginx server block for HTTPS
-            cat > "$NGINX_DIR/conf.d/$domain-ssl.conf" << EOF
-# SSL configuration for $domain
+    # Create example nginx configuration file
+    EXAMPLE_DIR="$NGINX_DIR/examples"
+    mkdir -p "$EXAMPLE_DIR"
+    cat > "$EXAMPLE_DIR/ssl-config.example" << 'EOF'
+# Example SSL configuration for Let's Encrypt certificates
+# This file is for reference only. The nginx plugin manages actual configurations.
+#
+# To use SSL in your nginx service, configure it through:
+#   gokku nginx:add-domain <nginx-service> <app> <domain>
+#
+# The certificates are available at:
+#   /etc/nginx/ssl/<domain>.crt
+#   /etc/nginx/ssl/<domain>.key
+
 server {
     listen 443 ssl http2;
-    server_name $domain;
+    server_name example.com;
 
-    ssl_certificate /etc/nginx/ssl/$domain.crt;
-    ssl_certificate_key /etc/nginx/ssl/$domain.key;
+    ssl_certificate /etc/nginx/ssl/example.com.crt;
+    ssl_certificate_key /etc/nginx/ssl/example.com.key;
 
     # SSL configuration
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -74,47 +87,27 @@ server {
     add_header X-Content-Type-Options nosniff;
     add_header X-XSS-Protection "1; mode=block";
 
-    # Default location - customize as needed
+    # Your location blocks here
     location / {
-        return 200 'HTTPS is working!';
-        add_header Content-Type text/plain;
+        # Configure your proxy or static file serving
     }
 }
 
 # HTTP redirect to HTTPS
 server {
     listen 80;
-    server_name $domain;
-    return 301 https://\$server_name\$request_uri;
+    server_name example.com;
+    return 301 https://$server_name$request_uri;
 }
 EOF
-        fi
-    done
-fi
-
-# Update nginx service configuration
-if [ -f "$NGINX_DIR/service.conf" ]; then
-    if command -v jq > /dev/null 2>&1; then
-        jq '.letsencrypt_enabled = true' "$NGINX_DIR/service.conf" > "$NGINX_DIR/service.conf.tmp" && mv "$NGINX_DIR/service.conf.tmp" "$NGINX_DIR/service.conf"
-    fi
+    echo "-----> Created example configuration: $EXAMPLE_DIR/ssl-config.example"
 fi
 
 echo "-----> Successfully linked Let's Encrypt plugin to nginx"
 echo "       Nginx service: $NGINX_SERVICE"
 echo "       SSL certificates: $NGINX_SSL_DIR/"
-echo "       Nginx configs: $NGINX_DIR/conf.d/"
-
-# Test nginx configuration
-echo "-----> Testing nginx configuration..."
-if container_exists "$NGINX_SERVICE" && container_is_running "$NGINX_SERVICE"; then
-    if docker exec "$NGINX_SERVICE" nginx -t; then
-        echo "-----> Nginx configuration is valid"
-        echo "-----> Reloading nginx..."
-        docker exec "$NGINX_SERVICE" nginx -s reload
-    else
-        echo "-----> Nginx configuration test failed"
-        echo "       Please check the configuration manually"
-    fi
-else
-    echo "-----> Nginx service not running, configuration will be applied on next start"
-fi
+echo "       Example config: $NGINX_DIR/examples/ssl-config.example"
+echo ""
+echo "-----> Next steps:"
+echo "       Configure your domain in nginx using:"
+echo "       gokku nginx:add-domain $NGINX_SERVICE <app> <domain>"

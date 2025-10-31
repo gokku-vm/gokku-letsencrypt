@@ -48,22 +48,24 @@ RENEWAL_EXIT_CODE=$?
 if [ $RENEWAL_EXIT_CODE -eq 0 ]; then
     echo "-----> Certificate renewal completed successfully"
 
-    # If nginx service is linked, reload nginx
+    # Update certificate symlinks if nginx service is linked
     if [ -f "$SERVICE_DIR/nginx-service" ]; then
         NGINX_SERVICE=$(cat "$SERVICE_DIR/nginx-service")
-        echo "-----> Reloading nginx service: $NGINX_SERVICE"
+        NGINX_DIR="/opt/gokku/services/$NGINX_SERVICE"
+        NGINX_SSL_DIR="$NGINX_DIR/ssl"
 
-        if container_exists "$NGINX_SERVICE" && container_is_running "$NGINX_SERVICE"; then
-            if docker exec "$NGINX_SERVICE" nginx -t; then
-                docker exec "$NGINX_SERVICE" nginx -s reload
-                echo "-----> Nginx reloaded successfully"
-            else
-                echo "-----> Nginx configuration test failed"
-                echo "       Please check nginx configuration manually"
-            fi
-        else
-            echo "-----> Nginx service not running"
-            echo "       Certificates will be available on next nginx start"
+        if [ -d "$NGINX_DIR" ] && [ -d "$NGINX_SSL_DIR" ]; then
+            echo "-----> Updating certificate symlinks for nginx service: $NGINX_SERVICE"
+            for domain_dir in "$CERTS_DIR"/*; do
+                if [ -d "$domain_dir" ]; then
+                    domain=$(basename "$domain_dir")
+                    if [ -f "$domain_dir/fullchain.pem" ] && [ -f "$domain_dir/privkey.pem" ]; then
+                        ln -sf "$domain_dir/fullchain.pem" "$NGINX_SSL_DIR/$domain.crt"
+                        ln -sf "$domain_dir/privkey.pem" "$NGINX_SSL_DIR/$domain.key"
+                        echo "       Updated symlinks for domain: $domain"
+                    fi
+                fi
+            done
         fi
     fi
 

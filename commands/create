@@ -75,12 +75,19 @@ if [ $? -eq 0 ]; then
         fi
     fi
 
-    # If nginx services are linked, update nginx configs
+    # If nginx services are linked, update certificate symlinks
     if [ -f "$PLUGIN_DIR/nginx-services" ]; then
         while read -r nginx_service; do
             if [ -n "$nginx_service" ]; then
-                echo "-----> Updating nginx configuration for $nginx_service"
-                /opt/gokku/contrib/plugins/letsencrypt/commands/link-nginx "$nginx_service"
+                echo "-----> Linking certificates to nginx service: $nginx_service"
+                NGINX_DIR="/opt/gokku/services/$nginx_service"
+                NGINX_SSL_DIR="$NGINX_DIR/ssl"
+                if [ -d "$NGINX_DIR" ]; then
+                    mkdir -p "$NGINX_SSL_DIR"
+                    ln -sf "$PLUGIN_DIR/certs/$DOMAIN/fullchain.pem" "$NGINX_SSL_DIR/$DOMAIN.crt"
+                    ln -sf "$PLUGIN_DIR/certs/$DOMAIN/privkey.pem" "$NGINX_SSL_DIR/$DOMAIN.key"
+                    echo "       Certificates linked for domain: $DOMAIN"
+                fi
             fi
         done < "$PLUGIN_DIR/nginx-services"
     fi

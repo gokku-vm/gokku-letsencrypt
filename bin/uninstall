@@ -43,60 +43,26 @@ if [ -f "$SERVICE_DIR/nginx-service" ]; then
     NGINX_SERVICE=$(cat "$SERVICE_DIR/nginx-service")
     echo "-----> Unlinking from nginx service: $NGINX_SERVICE"
 
-    # Remove SSL configurations from nginx
-    if [ -d "/opt/gokku/services/$NGINX_SERVICE/conf.d" ]; then
-        echo "-----> Removing SSL configurations from nginx..."
+    # Remove SSL certificate symlinks
+    if [ -d "/opt/gokku/services/$NGINX_SERVICE/ssl" ]; then
+        echo "-----> Removing SSL certificate symlinks..."
 
-        # Remove SSL config files created by this service
         for domain_dir in "$SERVICE_DIR/certs"/*; do
             if [ -d "$domain_dir" ]; then
                 domain=$(basename "$domain_dir")
-                ssl_config="/opt/gokku/services/$NGINX_SERVICE/conf.d/$domain-ssl.conf"
-                if [ -f "$ssl_config" ]; then
-                    rm -f "$ssl_config"
-                    echo "       Removed SSL config: $ssl_config"
+                ssl_cert="/opt/gokku/services/$NGINX_SERVICE/ssl/$domain.crt"
+                ssl_key="/opt/gokku/services/$NGINX_SERVICE/ssl/$domain.key"
+
+                if [ -L "$ssl_cert" ]; then
+                    rm -f "$ssl_cert"
+                    echo "       Removed SSL certificate: $ssl_cert"
+                fi
+                if [ -L "$ssl_key" ]; then
+                    rm -f "$ssl_key"
+                    echo "       Removed SSL key: $ssl_key"
                 fi
             fi
         done
-
-        # Remove SSL certificate symlinks
-        if [ -d "/opt/gokku/services/$NGINX_SERVICE/ssl" ]; then
-            for domain_dir in "$SERVICE_DIR/certs"/*; do
-                if [ -d "$domain_dir" ]; then
-                    domain=$(basename "$domain_dir")
-                    ssl_cert="/opt/gokku/services/$NGINX_SERVICE/ssl/$domain.crt"
-                    ssl_key="/opt/gokku/services/$NGINX_SERVICE/ssl/$domain.key"
-
-                    if [ -L "$ssl_cert" ]; then
-                        rm -f "$ssl_cert"
-                        echo "       Removed SSL certificate: $ssl_cert"
-                    fi
-                    if [ -L "$ssl_key" ]; then
-                        rm -f "$ssl_key"
-                        echo "       Removed SSL key: $ssl_key"
-                    fi
-                fi
-            done
-        fi
-
-        # Update nginx service configuration
-        if [ -f "/opt/gokku/services/$NGINX_SERVICE/service.conf" ]; then
-            # Remove letsencrypt_service reference
-            jq 'del(.letsencrypt_service)' "/opt/gokku/services/$NGINX_SERVICE/service.conf" > "/opt/gokku/services/$NGINX_SERVICE/service.conf.tmp" && mv "/opt/gokku/services/$NGINX_SERVICE/service.conf.tmp" "/opt/gokku/services/$NGINX_SERVICE/service.conf"
-        fi
-
-        # Test and reload nginx if running
-        if container_exists "$NGINX_SERVICE" && container_is_running "$NGINX_SERVICE"; then
-            echo "-----> Testing nginx configuration..."
-            if docker exec "$NGINX_SERVICE" nginx -t; then
-                echo "-----> Reloading nginx..."
-                docker exec "$NGINX_SERVICE" nginx -s reload
-                echo "       Nginx reloaded successfully"
-            else
-                echo "-----> Nginx configuration test failed"
-                echo "       Please check nginx configuration manually"
-            fi
-        fi
     fi
 fi
 

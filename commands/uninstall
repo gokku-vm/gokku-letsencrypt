@@ -38,20 +38,6 @@ if [ -f "$PLUGIN_DIR/nginx-services" ]; then
         if [ -n "$nginx_service" ] && [ -d "/opt/gokku/services/$nginx_service" ]; then
             echo "       Unlinking from nginx service: $nginx_service"
 
-            # Remove SSL configurations
-            if [ -d "/opt/gokku/services/$nginx_service/conf.d" ]; then
-                for domain_dir in "$PLUGIN_DIR/certs"/*; do
-                    if [ -d "$domain_dir" ]; then
-                        domain=$(basename "$domain_dir")
-                        ssl_config="/opt/gokku/services/$nginx_service/conf.d/$domain-ssl.conf"
-                        if [ -f "$ssl_config" ]; then
-                            rm -f "$ssl_config"
-                            echo "         Removed SSL config: $ssl_config"
-                        fi
-                    fi
-                done
-            fi
-
             # Remove SSL certificate symlinks
             if [ -d "/opt/gokku/services/$nginx_service/ssl" ]; then
                 for domain_dir in "$PLUGIN_DIR/certs"/*; do
@@ -62,21 +48,14 @@ if [ -f "$PLUGIN_DIR/nginx-services" ]; then
 
                         if [ -L "$ssl_cert" ]; then
                             rm -f "$ssl_cert"
+                            echo "         Removed SSL certificate: $ssl_cert"
                         fi
                         if [ -L "$ssl_key" ]; then
                             rm -f "$ssl_key"
+                            echo "         Removed SSL key: $ssl_key"
                         fi
                     fi
                 done
-            fi
-
-            # Test and reload nginx
-            if container_exists "$nginx_service" && container_is_running "$nginx_service"; then
-                echo "         Testing nginx configuration..."
-                if docker exec "$nginx_service" nginx -t 2>/dev/null; then
-                    docker exec "$nginx_service" nginx -s reload 2>/dev/null
-                    echo "         Nginx reloaded successfully"
-                fi
             fi
         fi
     done < "$PLUGIN_DIR/nginx-services"

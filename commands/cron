@@ -58,16 +58,24 @@ docker run --rm \
 if [ $? -eq 0 ]; then
     echo "$(date): Certificate renewal completed successfully"
 
-    # If nginx service is linked, reload nginx
+    # Update certificate symlinks if nginx service is linked
     if [ -f "$SERVICE_DIR/nginx-service" ]; then
         NGINX_SERVICE=$(cat "$SERVICE_DIR/nginx-service")
-        echo "$(date): Reloading nginx service: $NGINX_SERVICE"
+        NGINX_DIR="/opt/gokku/services/$NGINX_SERVICE"
+        NGINX_SSL_DIR="$NGINX_DIR/ssl"
 
-        if container_exists "$NGINX_SERVICE" && container_is_running "$NGINX_SERVICE"; then
-            docker exec "$NGINX_SERVICE" nginx -s reload
-            echo "$(date): Nginx reloaded successfully"
-        else
-            echo "$(date): Nginx service not running, certificates will be available on next start"
+        if [ -d "$NGINX_DIR" ] && [ -d "$NGINX_SSL_DIR" ] && [ -d "$SERVICE_DIR/certs" ]; then
+            echo "$(date): Updating certificate symlinks for nginx service: $NGINX_SERVICE"
+            for domain_dir in "$SERVICE_DIR/certs"/*; do
+                if [ -d "$domain_dir" ]; then
+                    domain=$(basename "$domain_dir")
+                    if [ -f "$domain_dir/fullchain.pem" ] && [ -f "$domain_dir/privkey.pem" ]; then
+                        ln -sf "$domain_dir/fullchain.pem" "$NGINX_SSL_DIR/$domain.crt"
+                        ln -sf "$domain_dir/privkey.pem" "$NGINX_SSL_DIR/$domain.key"
+                    fi
+                fi
+            done
+            echo "$(date): Certificate symlinks updated for $NGINX_SERVICE"
         fi
     fi
 else
