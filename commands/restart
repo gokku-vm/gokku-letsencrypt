@@ -2,6 +2,7 @@
 
 # Source Gokku helper functions
 if [ -f "/opt/gokku/scripts/plugin-helpers.sh" ]; then
+    # shellcheck disable=SC1091
     source /opt/gokku/scripts/plugin-helpers.sh
 fi
 
@@ -9,124 +10,73 @@ SERVICE_NAME="$1"
 
 if [ -z "$SERVICE_NAME" ]; then
     echo "Usage: $0 <service-name>"
-    echo "Example: $0 ssl-proxy"
+    echo "Example: $0 nginx-lb"
     exit 1
 fi
 
-echo "-----> Restarting Let's Encrypt service: $SERVICE_NAME"
+PLUGIN_DIR="/opt/gokku/plugins/letsencrypt"
+CERTS_DIR="$PLUGIN_DIR/certs"
+SERVICES_ROOT="/opt/gokku/services"
+SERVICE_DIR="$SERVICES_ROOT/$SERVICE_NAME"
+SSL_DIR="$SERVICE_DIR/ssl"
 
-# Check if service exists
-SERVICE_DIR="/opt/gokku/services/$SERVICE_NAME"
+echo "-----> Refreshing Let's Encrypt integration for nginx service: $SERVICE_NAME"
+
+if [ ! -d "$PLUGIN_DIR" ]; then
+    echo "-----> Let's Encrypt plugin not installed"
+    exit 1
+fi
+
+if [ ! -d "$CERTS_DIR" ]; then
+    echo "-----> No certificates found in plugin directory"
+    exit 1
+fi
+
 if [ ! -d "$SERVICE_DIR" ]; then
-    echo "-----> Service '$SERVICE_NAME' not found"
+    echo "-----> Service directory not found: $SERVICE_DIR"
     exit 1
 fi
 
-# Let's Encrypt service doesn't run as a persistent container
-# Instead, it uses certbot in a temporary container for operations
-# So "restart" means refreshing the service configuration and checking certificates
+mkdir -p "$SSL_DIR"
 
-echo "-----> Refreshing Let's Encrypt service configuration..."
+echo "-----> Re-linking certificates"
+linked_count=0
+while IFS= read -r -d '' domain_dir; do
+    domain=$(basename "$domain_dir")
+    fullchain="$domain_dir/fullchain.pem"
+    privkey="$domain_dir/privkey.pem"
 
-# Check service configuration
-if [ -f "$SERVICE_DIR/service.conf" ]; then
-    echo "-----> Service configuration: Valid"
-else
-    echo "-----> Service configuration: Missing"
-    echo "       Reinstalling service configuration..."
-
-    # Recreate service configuration
-    cat > "$SERVICE_DIR/service.conf" << EOF
-{
-    "service_name": "$SERVICE_NAME",
-    "service_type": "letsencrypt",
-    "config_dir": "$SERVICE_DIR",
-    "certs_dir": "$SERVICE_DIR/certs",
-    "accounts_dir": "$SERVICE_DIR/accounts",
-    "logs_dir": "$SERVICE_DIR/logs",
-    "domains": [],
-    "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "status": "running"
-}
-EOF
-fi
-
-# Check certificate directories
-mkdir -p "$SERVICE_DIR/certs"
-mkdir -p "$SERVICE_DIR/accounts"
-mkdir -p "$SERVICE_DIR/logs"
-
-# Check certificates
-echo "-----> Checking certificates..."
-if [ -d "$SERVICE_DIR/certs" ] && [ "$(ls -A "$SERVICE_DIR/certs" 2>/dev/null)" ]; then
-    cert_count=0
-    for domain_dir in "$SERVICE_DIR/certs"/*; do
-        if [ -d "$domain_dir" ]; then
-            domain=$(basename "$domain_dir")
-            cert_count=$((cert_count + 1))
-
-            if [ -f "$domain_dir/fullchain.pem" ] && [ -f "$domain_dir/privkey.pem" ]; then
-                echo "       $domain: Valid"
-            else
-                echo "       $domain: Incomplete"
-            fi
-        fi
-    done
-
-    if [ $cert_count -eq 0 ]; then
-        echo "       No certificates found"
+    if [ -f "$fullchain" ] && [ -f "$privkey" ]; then
+        ln -sf "$fullchain" "$SSL_DIR/$domain.crt"
+        ln -sf "$privkey" "$SSL_DIR/$domain.key"
+        echo "       Linked: $domain"
+        linked_count=$((linked_count + 1))
     fi
-else
-    echo "       No certificates found"
+done < <(find "$CERTS_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+
+if [ $linked_count -eq 0 ]; then
+    echo "       No certificates available to link"
 fi
 
-# Check nginx integration
-if [ -f "$SERVICE_DIR/nginx-service" ]; then
-    nginx_service=$(cat "$SERVICE_DIR/nginx-service")
-    echo "-----> Nginx integration: Linked to $nginx_service"
-
-    # Check certificate symlinks
-    NGINX_SSL_DIR="/opt/gokku/services/$nginx_service/ssl"
-    if [ -d "$NGINX_SSL_DIR" ]; then
-        symlink_count=0
-        for cert_file in "$NGINX_SSL_DIR"/*.crt; do
-            if [ -L "$cert_file" ]; then
-                symlink_count=$((symlink_count + 1))
-            fi
-        done
-        if [ $symlink_count -gt 0 ]; then
-            echo "       Certificate symlinks: $symlink_count linked"
-        else
-            echo "       Certificate symlinks: None"
-        fi
-    else
-        echo "       SSL directory: Not found"
-    fi
-else
-    echo "-----> Nginx integration: Not linked"
-fi
-
-# Check auto-renewal
-if [ -f "/etc/cron.d/gokku-letsencrypt-$SERVICE_NAME" ]; then
-    echo "-----> Auto-renewal: Enabled"
-else
-    echo "-----> Auto-renewal: Disabled"
-fi
-
-# Check renewal script
-if [ -f "$SERVICE_DIR/renew-certificates.sh" ]; then
-    echo "-----> Renewal script: Available"
-    chmod +x "$SERVICE_DIR/renew-certificates.sh"
-else
-    echo "-----> Renewal script: Missing"
-    echo "       Run 'gokku letsencrypt:auto-renew $SERVICE_NAME' to recreate"
-fi
-
-echo "-----> Let's Encrypt service restarted successfully"
-echo "       Service: $SERVICE_NAME"
-echo "       Status: Running"
 echo ""
-echo "-----> Next steps:"
-echo "       1. Check certificates: gokku letsencrypt:list $SERVICE_NAME"
-echo "       2. Check status: gokku letsencrypt:status $SERVICE_NAME"
-echo "       3. Setup auto-renewal: gokku letsencrypt:auto-renew $SERVICE_NAME"
+echo "-----> SSL directory contents:"
+if [ -d "$SSL_DIR" ] && compgen -G "$SSL_DIR/*" > /dev/null; then
+    ls -1 "$SSL_DIR" | sed 's/^/       /'
+else
+    echo "       (empty)"
+fi
+
+echo ""
+if [ -f "/etc/cron.d/gokku-letsencrypt-$SERVICE_NAME" ]; then
+    echo "-----> Auto-renewal cron: /etc/cron.d/gokku-letsencrypt-$SERVICE_NAME"
+else
+    echo "-----> Auto-renewal cron: not configured for this service"
+fi
+
+if [ -f "/etc/cron.d/gokku-letsencrypt" ]; then
+    echo "-----> Global auto-renewal cron: /etc/cron.d/gokku-letsencrypt"
+fi
+
+echo ""
+echo "-----> Let's Encrypt integration refreshed"
+echo "       Service: $SERVICE_NAME"

@@ -51,16 +51,6 @@ if [ "$(ls -A "$CERTS_DIR" 2>/dev/null)" ]; then
 
                 echo "  Certificate: $domain_dir/fullchain.pem"
                 echo "  Private key: $domain_dir/privkey.pem"
-
-                # Check if linked to nginx
-                if [ -f "$PLUGIN_DIR/nginx-services" ]; then
-                    echo "  Linked to nginx:"
-                    while read -r nginx_service; do
-                        if [ -n "$nginx_service" ]; then
-                            echo "    - $nginx_service"
-                        fi
-                    done < "$PLUGIN_DIR/nginx-services"
-                fi
             else
                 echo "  Status: Incomplete (missing certificate files)"
             fi

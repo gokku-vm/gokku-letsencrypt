@@ -2,38 +2,122 @@
 
 # Source Gokku helper functions
 if [ -f "/opt/gokku/scripts/plugin-helpers.sh" ]; then
+    # shellcheck disable=SC1091
     source /opt/gokku/scripts/plugin-helpers.sh
 fi
 
-SERVICE_NAME="$1"
+if [ -f "/opt/gokku/letsencrypt/lib/functions.sh" ]; then
+    # shellcheck disable=SC1091
+    source /opt/gokku/letsencrypt/lib/functions.sh
+fi
 
-if [ -z "$SERVICE_NAME" ]; then
-    echo "Usage: $0 <service-name>"
-    echo "Example: $0 ssl-proxy"
+SERVICE_FILTER="$1"
+
+PLUGIN_DIR="/opt/gokku/plugins/letsencrypt"
+CERTS_DIR="$PLUGIN_DIR/certs"
+LOGS_DIR="$PLUGIN_DIR/logs"
+SERVICES_ROOT="/opt/gokku/services"
+
+if [ -n "$SERVICE_FILTER" ]; then
+    echo "-----> Renewing Let's Encrypt certificates (service filter: $SERVICE_FILTER)"
+else
+    echo "-----> Renewing Let's Encrypt certificates"
+fi
+
+# Ensure plugin installation
+if [ ! -d "$PLUGIN_DIR" ]; then
+    echo "-----> Let's Encrypt plugin not installed"
+    echo "       Run 'gokku letsencrypt:install' first"
     exit 1
 fi
 
-echo "-----> Renewing certificates for Let's Encrypt service: $SERVICE_NAME"
-
-# Check if service exists
-SERVICE_DIR="/opt/gokku/services/$SERVICE_NAME"
-if [ ! -d "$SERVICE_DIR" ]; then
-    echo "-----> Service '$SERVICE_NAME' not found"
-    exit 1
+# Ensure there are certificates to renew
+if [ ! -d "$CERTS_DIR" ] || ! compgen -G "$CERTS_DIR/*" > /dev/null; then
+    echo "-----> No certificates found"
+    echo "       Run 'gokku letsencrypt:create <domain> [email]' to issue certificates"
+    exit 0
 fi
 
-# Check if certificates exist
-CERTS_DIR="$SERVICE_DIR/certs"
-if [ ! -d "$CERTS_DIR" ] || [ -z "$(ls -A "$CERTS_DIR" 2>/dev/null)" ]; then
-    echo "-----> No certificates found for service '$SERVICE_NAME'"
-    echo "       Run 'gokku letsencrypt:create $SERVICE_NAME <domain>' to create certificates"
-    exit 1
+update_symlinks_for_service() {
+    local service="$1"
+    local service_dir="$SERVICES_ROOT/$service"
+    local service_ssl_dir="$service_dir/ssl"
+
+    if [ ! -d "$service_dir" ]; then
+        echo "       Service '$service' directory not found, skipping"
+        return
+    fi
+
+    mkdir -p "$service_ssl_dir"
+
+    echo "       Updating SSL symlinks for service: $service"
+    while IFS= read -r -d '' domain_dir; do
+        local domain
+        local fullchain
+        local privkey
+
+        domain=$(basename "$domain_dir")
+        fullchain="$domain_dir/fullchain.pem"
+        privkey="$domain_dir/privkey.pem"
+
+        if [ -f "$fullchain" ] && [ -f "$privkey" ]; then
+            ln -sf "$fullchain" "$service_ssl_dir/$domain.crt"
+            ln -sf "$privkey" "$service_ssl_dir/$domain.key"
+            echo "         Linked domain: $domain"
+        fi
+    done < <(find "$CERTS_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+}
+
+services_to_update=()
+add_service_to_update() {
+    local candidate="$1"
+    local existing
+    [ -z "$candidate" ] && return
+    for existing in "${services_to_update[@]}"; do
+        if [ "$existing" = "$candidate" ]; then
+            return
+        fi
+    done
+    services_to_update+=("$candidate")
+}
+
+if [ -n "$SERVICE_FILTER" ]; then
+    add_service_to_update "$SERVICE_FILTER"
 fi
 
-# Renew certificates using certbot
-echo "-----> Starting certificate renewal process..."
+if [ ${#services_to_update[@]} -eq 0 ]; then
+    candidate_ssl_dirs=()
+    if command -v list_ssl_dirs >/dev/null 2>&1; then
+        mapfile -t candidate_ssl_dirs < <(list_ssl_dirs)
+    elif [ -d "$SERVICES_ROOT" ]; then
+        while IFS= read -r -d '' ssl_dir; do
+            candidate_ssl_dirs+=("$ssl_dir")
+        done < <(find "$SERVICES_ROOT" -mindepth 2 -maxdepth 2 -type d -name ssl -print0 2>/dev/null)
+    fi
 
-# Find and temporarily stop nginx containers that are using port 80
+    if [ ${#candidate_ssl_dirs[@]} -gt 0 ]; then
+        for ssl_dir in "${candidate_ssl_dirs[@]}"; do
+            service_name=$(basename "$(dirname "$ssl_dir")")
+            if compgen -G "$ssl_dir"/*.crt > /dev/null 2>&1; then
+                for cert_path in "$ssl_dir"/*.crt; do
+                    [ -e "$cert_path" ] || continue
+                    if [ -L "$cert_path" ]; then
+                        target=$(readlink "$cert_path")
+                        case "$target" in
+                            "$CERTS_DIR"/*)
+                                add_service_to_update "$service_name"
+                                break
+                                ;;
+                        esac
+                    fi
+                done
+            fi
+        done
+    fi
+fi
+
+echo "-----> Requesting renewal with certbot"
+
 CONTAINERS_TO_RESTART=()
 for container in $(docker ps --format "{{.Names}}"); do
     if docker port "$container" 2>/dev/null | grep -qE ":80/"; then
@@ -44,78 +128,69 @@ for container in $(docker ps --format "{{.Names}}"); do
 done
 
 docker run --rm \
-    -v "$SERVICE_DIR/certs:/etc/letsencrypt/certs" \
-    -v "$SERVICE_DIR/accounts:/etc/letsencrypt/accounts" \
-    -v "$SERVICE_DIR/logs:/var/log/letsencrypt" \
+    -v "$PLUGIN_DIR:/etc/letsencrypt" \
+    -v "$PLUGIN_DIR/logs:/var/log/letsencrypt" \
     -p 80:80 \
     certbot/certbot renew \
     --preferred-challenges http \
-    --config-dir "/etc/letsencrypt/accounts" \
-    --cert-path "/etc/letsencrypt/certs" \
+    --config-dir "/etc/letsencrypt" \
+    --work-dir "/etc/letsencrypt" \
+    --logs-dir "/var/log/letsencrypt" \
     --non-interactive \
     --quiet
 
 RENEWAL_EXIT_CODE=$?
 
-# Restart containers that were temporarily stopped
 if [ ${#CONTAINERS_TO_RESTART[@]} -gt 0 ]; then
-    echo "-----> Restarting temporarily stopped containers..."
+    echo "-----> Restarting temporarily stopped containers"
     for container in "${CONTAINERS_TO_RESTART[@]}"; do
-        echo "       Restarting: $container"
         docker start "$container" > /dev/null 2>&1
     done
 fi
 
-if [ $RENEWAL_EXIT_CODE -eq 0 ]; then
-    echo "-----> Certificate renewal completed successfully"
-
-    # Update certificate symlinks if nginx service is linked
-    if [ -f "$SERVICE_DIR/nginx-service" ]; then
-        NGINX_SERVICE=$(cat "$SERVICE_DIR/nginx-service")
-        NGINX_DIR="/opt/gokku/services/$NGINX_SERVICE"
-        NGINX_SSL_DIR="$NGINX_DIR/ssl"
-
-        if [ -d "$NGINX_DIR" ] && [ -d "$NGINX_SSL_DIR" ]; then
-            echo "-----> Updating certificate symlinks for nginx service: $NGINX_SERVICE"
-            for domain_dir in "$CERTS_DIR"/*; do
-                if [ -d "$domain_dir" ]; then
-                    domain=$(basename "$domain_dir")
-                    if [ -f "$domain_dir/fullchain.pem" ] && [ -f "$domain_dir/privkey.pem" ]; then
-                        ln -sf "$domain_dir/fullchain.pem" "$NGINX_SSL_DIR/$domain.crt"
-                        ln -sf "$domain_dir/privkey.pem" "$NGINX_SSL_DIR/$domain.key"
-                        echo "       Updated symlinks for domain: $domain"
-                    fi
-                fi
-            done
-        fi
-    fi
-
-    # Show updated certificate information
-    echo ""
-    echo "-----> Updated certificate information:"
-    for domain_dir in "$CERTS_DIR"/*; do
-        if [ -d "$domain_dir" ]; then
-            domain=$(basename "$domain_dir")
-            if [ -f "$domain_dir/fullchain.pem" ]; then
-                if command -v openssl >/dev/null 2>&1; then
-                    expiry=$(openssl x509 -enddate -noout -in "$domain_dir/fullchain.pem" 2>/dev/null | cut -d= -f2)
-                    if [ -n "$expiry" ]; then
-                        echo "       $domain: Expires $expiry"
-                    fi
-                else
-                    echo "       $domain: Certificate renewed"
-                fi
-            fi
-        fi
-    done
-
-    echo ""
-    echo "-----> Certificate renewal completed successfully"
-    echo "       All certificates have been renewed"
-
-else
+if [ $RENEWAL_EXIT_CODE -ne 0 ]; then
     echo "-----> Certificate renewal failed"
-    echo "       Check logs: $SERVICE_DIR/logs/"
-    echo "       Manual renewal may be required"
+    echo "       Check logs: $LOGS_DIR"
     exit 1
 fi
+
+if ! chmod -R u+rwX "$PLUGIN_DIR" 2>/dev/null; then
+    sudo chown -R "$(whoami):$(whoami)" "$PLUGIN_DIR" 2>/dev/null || true
+    chmod -R 755 "$PLUGIN_DIR" 2>/dev/null || true
+fi
+
+echo "-----> Certificates renewed successfully"
+
+if [ ${#services_to_update[@]} -gt 0 ]; then
+    echo "-----> Refreshing nginx SSL symlinks"
+    for service in "${services_to_update[@]}"; do
+        if [ -n "$SERVICE_FILTER" ] && [ "$service" != "$SERVICE_FILTER" ]; then
+            continue
+        fi
+        update_symlinks_for_service "$service"
+    done
+else
+    echo "-----> No nginx services detected for relinking"
+fi
+
+echo ""
+echo "-----> Updated certificate information:"
+while IFS= read -r -d '' domain_dir; do
+    domain=$(basename "$domain_dir")
+    fullchain="$domain_dir/fullchain.pem"
+    if [ -f "$fullchain" ]; then
+        if command -v openssl >/dev/null 2>&1; then
+            expiry=$(openssl x509 -enddate -noout -in "$fullchain" 2>/dev/null | cut -d= -f2)
+            if [ -n "$expiry" ]; then
+                echo "       $domain: Expires $expiry"
+            else
+                echo "       $domain: Certificate renewed"
+            fi
+        else
+            echo "       $domain: Certificate renewed"
+        fi
+    fi
+done < <(find "$CERTS_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+
+echo ""
+echo "-----> Renewal process complete"

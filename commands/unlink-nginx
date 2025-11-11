@@ -2,64 +2,71 @@
 
 # Source Gokku helper functions
 if [ -f "/opt/gokku/scripts/plugin-helpers.sh" ]; then
+    # shellcheck disable=SC1091
     source /opt/gokku/scripts/plugin-helpers.sh
 fi
 
-SERVICE_NAME="$1"
+NGINX_SERVICE="$1"
 
-if [ -z "$SERVICE_NAME" ]; then
-    echo "Usage: $0 <service-name>"
-    echo "Example: $0 ssl-proxy"
+if [ -z "$NGINX_SERVICE" ]; then
+    echo "Usage: $0 <nginx-service>"
+    echo "Example: $0 nginx-lb"
     exit 1
 fi
 
-echo "-----> Unlinking Let's Encrypt service '$SERVICE_NAME' from nginx"
+PLUGIN_DIR="/opt/gokku/plugins/letsencrypt"
+CERTS_DIR="$PLUGIN_DIR/certs"
+SERVICES_ROOT="/opt/gokku/services"
+SERVICE_DIR="$SERVICES_ROOT/$NGINX_SERVICE"
+SSL_DIR="$SERVICE_DIR/ssl"
 
-# Check if service exists
-SERVICE_DIR="/opt/gokku/services/$SERVICE_NAME"
+echo "-----> Unlinking Let's Encrypt certificates from nginx service '$NGINX_SERVICE'"
+
+if [ ! -d "$PLUGIN_DIR" ]; then
+    echo "-----> Let's Encrypt plugin not installed"
+    exit 1
+fi
+
 if [ ! -d "$SERVICE_DIR" ]; then
-    echo "-----> Service '$SERVICE_NAME' not found"
+    echo "-----> Service directory not found: $SERVICE_DIR"
     exit 1
 fi
 
-# Check if nginx service is linked
-if [ ! -f "$SERVICE_DIR/nginx-service" ]; then
-    echo "-----> No nginx service linked to '$SERVICE_NAME'"
+if [ ! -d "$SSL_DIR" ]; then
+    echo "-----> SSL directory not found for service '$NGINX_SERVICE'"
     exit 0
 fi
 
-NGINX_SERVICE=$(cat "$SERVICE_DIR/nginx-service")
-echo "-----> Unlinking from nginx service: $NGINX_SERVICE"
-
-# Remove SSL certificate symlinks
-if [ -d "/opt/gokku/services/$NGINX_SERVICE/ssl" ]; then
-    echo "-----> Removing SSL certificate symlinks..."
-
-    for domain_dir in "$SERVICE_DIR/certs"/*; do
-        if [ -d "$domain_dir" ]; then
-            domain=$(basename "$domain_dir")
-            ssl_cert="/opt/gokku/services/$NGINX_SERVICE/ssl/$domain.crt"
-            ssl_key="/opt/gokku/services/$NGINX_SERVICE/ssl/$domain.key"
-
-            if [ -L "$ssl_cert" ]; then
-                echo "       Removing SSL certificate: $ssl_cert"
-                rm -f "$ssl_cert"
-            fi
-            if [ -L "$ssl_key" ]; then
-                echo "       Removing SSL key: $ssl_key"
-                rm -f "$ssl_key"
-            fi
-        fi
-    done
+if [ ! -d "$CERTS_DIR" ]; then
+    echo "-----> No certificates directory found in plugin"
 fi
 
-# Remove nginx service link
-rm -f "$SERVICE_DIR/nginx-service"
+# Remove symlinks that point to plugin certificates
+removed_any=false
+if [ -d "$CERTS_DIR" ]; then
+    while IFS= read -r -d '' cert_dir; do
+        domain=$(basename "$cert_dir")
+        cert_path="$SSL_DIR/$domain.crt"
+        key_path="$SSL_DIR/$domain.key"
 
-echo "-----> Successfully unlinked Let's Encrypt service from nginx"
-echo "       Let's Encrypt service: $SERVICE_NAME"
-echo "       Nginx service: $NGINX_SERVICE"
-echo "       SSL certificate symlinks removed"
+        if [ -L "$cert_path" ] && [ "$(readlink "$cert_path")" = "$cert_dir/fullchain.pem" ]; then
+            rm -f "$cert_path"
+            echo "       Removed certificate symlink: $cert_path"
+            removed_any=true
+        fi
+        if [ -L "$key_path" ] && [ "$(readlink "$key_path")" = "$cert_dir/privkey.pem" ]; then
+            rm -f "$key_path"
+            echo "       Removed key symlink: $key_path"
+            removed_any=true
+        fi
+    done < <(find "$CERTS_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+fi
+
+if [ "$removed_any" = false ]; then
+    echo "       No certificate symlinks found for this service"
+fi
+
+echo "-----> Successfully unlinked nginx service: $NGINX_SERVICE"
 echo ""
-echo "-----> Note: SSL certificates are still available in $SERVICE_DIR/certs/"
-echo "       You can re-link to nginx or another service later"
+echo "-----> Certificates remain available in $CERTS_DIR"
+echo "       Re-link anytime: gokku letsencrypt:link-nginx $NGINX_SERVICE"

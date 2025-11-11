@@ -5,82 +5,71 @@ if [ -f "/opt/gokku/scripts/plugin-helpers.sh" ]; then
     source /opt/gokku/scripts/plugin-helpers.sh
 fi
 
-SERVICE_NAME="$1"
-DOMAIN="$2"
+DOMAIN="$1"
+SERVICE_FILTER="$2"
 
-if [ -z "$SERVICE_NAME" ] || [ -z "$DOMAIN" ]; then
-    echo "Usage: $0 <service-name> <domain>"
-    echo "Example: $0 ssl-proxy example.com"
+if [ -z "$DOMAIN" ]; then
+    echo "Usage: $0 <domain> [nginx-service]"
+    echo "Example: $0 example.com nginx-lb"
     exit 1
 fi
+
+PLUGIN_DIR="/opt/gokku/plugins/letsencrypt"
+CERT_DIR="$PLUGIN_DIR/certs/$DOMAIN"
+SERVICES_ROOT="/opt/gokku/services"
 
 echo "-----> Certificate information for $DOMAIN"
 
-# Check if service exists
-SERVICE_DIR="/opt/gokku/services/$SERVICE_NAME"
-if [ ! -d "$SERVICE_DIR" ]; then
-    echo "-----> Service '$SERVICE_NAME' not found"
+if [ ! -d "$PLUGIN_DIR" ]; then
+    echo "-----> Let's Encrypt plugin not installed"
     exit 1
 fi
 
-CERT_DIR="$SERVICE_DIR/certs/$DOMAIN"
 if [ ! -d "$CERT_DIR" ]; then
     echo "-----> Certificate for domain '$DOMAIN' not found"
-    echo "       Run 'gokku letsencrypt:create $SERVICE_NAME $DOMAIN' to create certificate"
+    echo "       Run 'gokku letsencrypt:create $DOMAIN [email]' to create certificate"
     exit 1
 fi
 
-# Check if certificate files exist
-if [ ! -f "$CERT_DIR/fullchain.pem" ] || [ ! -f "$CERT_DIR/privkey.pem" ]; then
-    echo "-----> Certificate files not found for domain '$DOMAIN'"
+FULLCHAIN="$CERT_DIR/fullchain.pem"
+PRIVKEY="$CERT_DIR/privkey.pem"
+
+if [ ! -f "$FULLCHAIN" ] || [ ! -f "$PRIVKEY" ]; then
+    echo "-----> Certificate files incomplete for domain '$DOMAIN'"
     exit 1
 fi
 
 echo "-----> Certificate Details:"
 echo "       Domain: $DOMAIN"
-echo "       Service: $SERVICE_NAME"
-echo "       Certificate: $CERT_DIR/fullchain.pem"
-echo "       Private key: $CERT_DIR/privkey.pem"
+echo "       Certificate: $FULLCHAIN"
+echo "       Private key: $PRIVKEY"
 echo ""
 
-# Get detailed certificate information using openssl
 if command -v openssl >/dev/null 2>&1; then
     echo "-----> Certificate Information:"
+    subject=$(openssl x509 -subject -noout -in "$FULLCHAIN" 2>/dev/null)
+    issuer=$(openssl x509 -issuer -noout -in "$FULLCHAIN" 2>/dev/null)
+    not_before=$(openssl x509 -startdate -noout -in "$FULLCHAIN" 2>/dev/null | cut -d= -f2)
+    not_after=$(openssl x509 -enddate -noout -in "$FULLCHAIN" 2>/dev/null | cut -d= -f2)
+    fingerprint=$(openssl x509 -fingerprint -noout -in "$FULLCHAIN" 2>/dev/null)
+    serial=$(openssl x509 -serial -noout -in "$FULLCHAIN" 2>/dev/null)
 
-    # Get certificate subject
-    subject=$(openssl x509 -subject -noout -in "$CERT_DIR/fullchain.pem" 2>/dev/null)
-    if [ -n "$subject" ]; then
-        echo "       Subject: $subject"
+    [ -n "$subject" ] && echo "       Subject: $subject"
+    [ -n "$issuer" ] && echo "       Issuer: $issuer"
+
+    if [ -n "$not_before" ] || [ -n "$not_after" ]; then
+        echo "       Validity:"
+        [ -n "$not_before" ] && echo "         Not before: $not_before"
+        [ -n "$not_after" ] && echo "         Not after: $not_after"
     fi
 
-    # Get certificate issuer
-    issuer=$(openssl x509 -issuer -noout -in "$CERT_DIR/fullchain.pem" 2>/dev/null)
-    if [ -n "$issuer" ]; then
-        echo "       Issuer: $issuer"
-    fi
-
-    # Get certificate validity dates
-    echo "       Validity:"
-    not_before=$(openssl x509 -startdate -noout -in "$CERT_DIR/fullchain.pem" 2>/dev/null | cut -d= -f2)
-    not_after=$(openssl x509 -enddate -noout -in "$CERT_DIR/fullchain.pem" 2>/dev/null | cut -d= -f2)
-
-    if [ -n "$not_before" ]; then
-        echo "         Not before: $not_before"
-    fi
-    if [ -n "$not_after" ]; then
-        echo "         Not after: $not_after"
-    fi
-
-    # Calculate days until expiry
     if [ -n "$not_after" ]; then
         expiry_timestamp=$(date -d "$not_after" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$not_after" +%s 2>/dev/null)
         if [ -n "$expiry_timestamp" ]; then
             current_timestamp=$(date +%s)
             days_until_expiry=$(( (expiry_timestamp - current_timestamp) / 86400 ))
-
             if [ $days_until_expiry -gt 0 ]; then
                 echo "         Days until expiry: $days_until_expiry"
-
                 if [ $days_until_expiry -lt 30 ]; then
                     echo "         WARNING: Certificate expires in less than 30 days!"
                 fi
@@ -90,57 +79,84 @@ if command -v openssl >/dev/null 2>&1; then
         fi
     fi
 
-    # Get certificate fingerprint
-    fingerprint=$(openssl x509 -fingerprint -noout -in "$CERT_DIR/fullchain.pem" 2>/dev/null)
-    if [ -n "$fingerprint" ]; then
-        echo "       Fingerprint: $fingerprint"
-    fi
+    [ -n "$fingerprint" ] && echo "       Fingerprint: $fingerprint"
+    [ -n "$serial" ] && echo "       Serial: $serial"
 
-    # Get certificate serial number
-    serial=$(openssl x509 -serial -noout -in "$CERT_DIR/fullchain.pem" 2>/dev/null)
-    if [ -n "$serial" ]; then
-        echo "       Serial: $serial"
-    fi
-
-    echo ""
-
-    # Get SAN (Subject Alternative Names)
-    san=$(openssl x509 -text -noout -in "$CERT_DIR/fullchain.pem" 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -1)
+    san=$(openssl x509 -text -noout -in "$FULLCHAIN" 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -1)
     if [ -n "$san" ]; then
+        echo ""
         echo "       Subject Alternative Names:"
         echo "$san" | tr ',' '\n' | sed 's/^/         /'
-        echo ""
     fi
+    echo ""
 else
     echo "-----> OpenSSL not available for detailed certificate information"
+    echo ""
 fi
 
-# Check if linked to nginx
-if [ -f "$SERVICE_DIR/nginx-service" ]; then
-    nginx_service=$(cat "$SERVICE_DIR/nginx-service")
-    echo "-----> Nginx Integration:"
-    echo "       Linked to nginx service: $nginx_service"
+echo "-----> Nginx Integration:"
 
-    # Check if nginx has the certificate
-    nginx_ssl_dir="/opt/gokku/services/$nginx_service/ssl"
-    if [ -f "$nginx_ssl_dir/$DOMAIN.crt" ] && [ -f "$nginx_ssl_dir/$DOMAIN.key" ]; then
-        echo "       Nginx SSL files: Available"
-        echo "         Certificate: $nginx_ssl_dir/$DOMAIN.crt"
-        echo "         Private key: $nginx_ssl_dir/$DOMAIN.key"
-    else
-        echo "       Nginx SSL files: Not found"
-        echo "       Run 'gokku letsencrypt:link-nginx $SERVICE_NAME $nginx_service' to link"
+linked_services=()
+add_service_if_linked() {
+    local svc="$1"
+    local ssl_dir="$SERVICES_ROOT/$svc/ssl"
+    local cert_path="$ssl_dir/$DOMAIN.crt"
+    local key_path="$ssl_dir/$DOMAIN.key"
+
+    if [ -f "$cert_path" ] || [ -f "$key_path" ]; then
+        for existing in "${linked_services[@]}"; do
+            if [ "$existing" = "$svc" ]; then
+                return
+            fi
+        done
+        linked_services+=("$svc")
+        echo "       Service: $svc"
+        if [ -L "$cert_path" ]; then
+            echo "         Certificate symlink: $cert_path -> $(readlink "$cert_path")"
+        elif [ -f "$cert_path" ]; then
+            echo "         Certificate file: $cert_path"
+        else
+            echo "         Certificate missing: $cert_path"
+        fi
+
+        if [ -L "$key_path" ]; then
+            echo "         Key symlink: $key_path -> $(readlink "$key_path")"
+        elif [ -f "$key_path" ]; then
+            echo "         Key file: $key_path"
+        else
+            echo "         Key missing: $key_path"
+        fi
     fi
+}
+
+if [ -n "$SERVICE_FILTER" ]; then
+    add_service_if_linked "$SERVICE_FILTER"
 else
-    echo "-----> Nginx Integration: Not linked"
-    echo "       Run 'gokku letsencrypt:link-nginx $SERVICE_NAME <nginx-service>' to link"
+    if [ ${#linked_services[@]} -eq 0 ] && [ -d "$SERVICES_ROOT" ]; then
+        while IFS= read -r -d '' ssl_dir; do
+            svc_name=$(basename "$(dirname "$ssl_dir")")
+            add_service_if_linked "$svc_name"
+        done < <(find "$SERVICES_ROOT" -mindepth 2 -maxdepth 2 -type d -name ssl -print0 2>/dev/null)
+    fi
 fi
 
-# Check auto-renewal status
-if [ -f "/etc/cron.d/gokku-letsencrypt-$SERVICE_NAME" ]; then
-    echo "-----> Auto-renewal: Enabled"
-    echo "       Cron job: /etc/cron.d/gokku-letsencrypt-$SERVICE_NAME"
+if [ ${#linked_services[@]} -eq 0 ]; then
+    echo "       Not linked to any service"
+    echo "       Run 'gokku letsencrypt:link-nginx <service-name>' to link certificates"
+fi
+
+echo ""
+echo "-----> Auto-renewal:"
+if [ -f "/etc/cron.d/gokku-letsencrypt" ]; then
+    echo "       Global auto-renewal: Enabled (/etc/cron.d/gokku-letsencrypt)"
 else
-    echo "-----> Auto-renewal: Disabled"
-    echo "       Run 'gokku letsencrypt:auto-renew $SERVICE_NAME' to enable"
+    echo "       Global auto-renewal: Disabled"
+fi
+
+if [ -n "$SERVICE_FILTER" ]; then
+    if [ -f "/etc/cron.d/gokku-letsencrypt-$SERVICE_FILTER" ]; then
+        echo "       Service auto-renewal: Enabled (/etc/cron.d/gokku-letsencrypt-$SERVICE_FILTER)"
+    else
+        echo "       Service auto-renewal: Disabled"
+    fi
 fi

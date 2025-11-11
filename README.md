@@ -60,7 +60,6 @@ gokku letsencrypt:link-nginx nginx-lb
 ├── logs/                     # Certificate logs
 ├── config.json               # Gokku plugin configuration
 ├── plugin.conf               # Internal plugin configuration
-├── nginx-services            # List of linked nginx services
 └── renew-certificates.sh     # Renewal script
 ```
 

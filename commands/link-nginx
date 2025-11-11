@@ -8,7 +8,7 @@ fi
 NGINX_SERVICE="$1"
 
 if [ -z "$NGINX_SERVICE" ]; then
-    echo "Usage: $0 <nginx-service>"
+    echo "Usage: $0 <service-name>"
     echo "Example: $0 nginx-lb"
     exit 1
 fi
@@ -28,12 +28,6 @@ NGINX_DIR="/opt/gokku/services/$NGINX_SERVICE"
 if [ ! -d "$NGINX_DIR" ]; then
     echo "-----> Nginx service '$NGINX_SERVICE' not found"
     exit 1
-fi
-
-# Add nginx service to list of linked services
-if [ ! -f "$PLUGIN_DIR/nginx-services" ] || ! grep -q "^$NGINX_SERVICE$" "$PLUGIN_DIR/nginx-services"; then
-    echo "$NGINX_SERVICE" >> "$PLUGIN_DIR/nginx-services"
-    echo "-----> Added nginx service to linked services"
 fi
 
 # Create symlinks for certificates in nginx ssl directory

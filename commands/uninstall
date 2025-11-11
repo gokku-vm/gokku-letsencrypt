@@ -30,35 +30,25 @@ if [ -f "$RENEWAL_LOG" ]; then
     echo "       Log file removed: $RENEWAL_LOG"
 fi
 
-# Unlink from nginx services
-if [ -f "$PLUGIN_DIR/nginx-services" ]; then
-    echo "-----> Unlinking from nginx services..."
+# Unlink certificates from services
+SERVICES_ROOT="/opt/gokku/services"
+if [ -d "$SERVICES_ROOT" ]; then
+    echo "-----> Removing SSL symlinks from services..."
+    while IFS= read -r -d '' cert_path; do
+        ssl_dir=$(dirname "$cert_path")
+        service_name=$(basename "$(dirname "$ssl_dir")")
+        domain=$(basename "$cert_path" .crt)
+        target=$(readlink "$cert_path" 2>/dev/null || true)
 
-    while read -r nginx_service; do
-        if [ -n "$nginx_service" ] && [ -d "/opt/gokku/services/$nginx_service" ]; then
-            echo "       Unlinking from nginx service: $nginx_service"
-
-            # Remove SSL certificate symlinks
-            if [ -d "/opt/gokku/services/$nginx_service/ssl" ]; then
-                for domain_dir in "$PLUGIN_DIR/certs"/*; do
-                    if [ -d "$domain_dir" ]; then
-                        domain=$(basename "$domain_dir")
-                        ssl_cert="/opt/gokku/services/$nginx_service/ssl/$domain.crt"
-                        ssl_key="/opt/gokku/services/$nginx_service/ssl/$domain.key"
-
-                        if [ -L "$ssl_cert" ]; then
-                            rm -f "$ssl_cert"
-                            echo "         Removed SSL certificate: $ssl_cert"
-                        fi
-                        if [ -L "$ssl_key" ]; then
-                            rm -f "$ssl_key"
-                            echo "         Removed SSL key: $ssl_key"
-                        fi
-                    fi
-                done
+        if [ -n "$target" ] && [[ "$target" == "$PLUGIN_DIR/certs/$domain/"* || "$target" == "$PLUGIN_DIR/certs/$domain/fullchain.pem" ]]; then
+            echo "       Service: $service_name (domain: $domain)"
+            rm -f "$cert_path"
+            key_path="$ssl_dir/$domain.key"
+            if [ -L "$key_path" ]; then
+                rm -f "$key_path"
             fi
         fi
-    done < "$PLUGIN_DIR/nginx-services"
+    done < <(find "$SERVICES_ROOT" -mindepth 2 -maxdepth 2 -type l -name "*.crt" -print0 2>/dev/null)
 fi
 
 # Remove plugin directory

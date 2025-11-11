@@ -38,32 +38,12 @@ if [ -f "$RENEWAL_LOG" ]; then
     echo "       Log file removed: $RENEWAL_LOG"
 fi
 
-# Check if nginx service is linked
-if [ -f "$SERVICE_DIR/nginx-service" ]; then
-    NGINX_SERVICE=$(cat "$SERVICE_DIR/nginx-service")
-    echo "-----> Unlinking from nginx service: $NGINX_SERVICE"
-
-    # Remove SSL certificate symlinks
-    if [ -d "/opt/gokku/services/$NGINX_SERVICE/ssl" ]; then
-        echo "-----> Removing SSL certificate symlinks..."
-
-        for domain_dir in "$SERVICE_DIR/certs"/*; do
-            if [ -d "$domain_dir" ]; then
-                domain=$(basename "$domain_dir")
-                ssl_cert="/opt/gokku/services/$NGINX_SERVICE/ssl/$domain.crt"
-                ssl_key="/opt/gokku/services/$NGINX_SERVICE/ssl/$domain.key"
-
-                if [ -L "$ssl_cert" ]; then
-                    rm -f "$ssl_cert"
-                    echo "       Removed SSL certificate: $ssl_cert"
-                fi
-                if [ -L "$ssl_key" ]; then
-                    rm -f "$ssl_key"
-                    echo "       Removed SSL key: $ssl_key"
-                fi
-            fi
-        done
-    fi
+# Attempt to unlink certificates from nginx service using updated command
+if command -v gokku >/dev/null 2>&1; then
+    echo "-----> Removing nginx SSL symlinks (if any)"
+    gokku letsencrypt:unlink-nginx "$SERVICE_NAME" || true
+else
+    echo "-----> Warning: 'gokku' command not found; skip nginx unlink step"
 fi
 
 # Remove service directory

@@ -91,28 +91,6 @@ if [ $RENEW_EXIT_CODE -eq 0 ]; then
     fi
 
     # Update certificate symlinks for all linked nginx services
-    if [ -f "$PLUGIN_DIR/nginx-services" ]; then
-        while read -r nginx_service; do
-            if [ -n "$nginx_service" ]; then
-                NGINX_DIR="/opt/gokku/services/$nginx_service"
-                NGINX_SSL_DIR="$NGINX_DIR/ssl"
-
-                if [ -d "$NGINX_DIR" ] && [ -d "$NGINX_SSL_DIR" ] && [ -d "$PLUGIN_DIR/certs" ]; then
-                    echo "$(date): Updating certificate symlinks for nginx service: $nginx_service"
-                    for domain_dir in "$PLUGIN_DIR/certs"/*; do
-                        if [ -d "$domain_dir" ]; then
-                            domain=$(basename "$domain_dir")
-                            if [ -f "$domain_dir/fullchain.pem" ] && [ -f "$domain_dir/privkey.pem" ]; then
-                                ln -sf "$domain_dir/fullchain.pem" "$NGINX_SSL_DIR/$domain.crt"
-                                ln -sf "$domain_dir/privkey.pem" "$NGINX_SSL_DIR/$domain.key"
-                            fi
-                        fi
-                    done
-                    echo "$(date): Certificate symlinks updated for $nginx_service"
-                fi
-            fi
-        done < "$PLUGIN_DIR/nginx-services"
-    fi
 else
     echo "$(date): Certificate renewal failed"
     exit 1
@@ -124,14 +102,15 @@ fi
 
 # Create cron job
 CRON_FILE="/etc/cron.d/gokku-letsencrypt"
-cat > "$CRON_FILE" << EOF
+sudo cat > "$CRON_FILE" << EOF
 # Auto-renewal for Let's Encrypt plugin
 # Runs every day at 2:30 AM
 30 2 * * * root $RENEWAL_SCRIPT >> /var/log/gokku-letsencrypt.log 2>&1
 EOF
 
 # Set proper permissions
-chmod 644 "$CRON_FILE"
+sudo chown "$(whoami):$(whoami)" "$CRON_FILE" 2>/dev/null || true
+sudo chmod 644 "$CRON_FILE"
 
 echo "-----> Auto-renewal configured successfully"
 echo "       Cron file: $CRON_FILE"

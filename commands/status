@@ -2,136 +2,317 @@
 
 # Source Gokku helper functions
 if [ -f "/opt/gokku/scripts/plugin-helpers.sh" ]; then
+    # shellcheck disable=SC1091
     source /opt/gokku/scripts/plugin-helpers.sh
 fi
 
-SERVICE_NAME="$1"
+SERVICE_FILTER="$1"
+PLUGIN_DIR="/opt/gokku/plugins/letsencrypt"
+CERTS_DIR="$PLUGIN_DIR/certs"
+LOGS_DIR="$PLUGIN_DIR/logs"
+CONFIG_FILE="$PLUGIN_DIR/config.json"
+PLUGIN_CONF="$PLUGIN_DIR/plugin.conf"
+GLOBAL_CRON_FILE="/etc/cron.d/gokku-letsencrypt"
+SERVICES_ROOT="/opt/gokku/services"
 
-if [ -z "$SERVICE_NAME" ]; then
-    echo "Usage: $0 <service-name>"
-    echo "Example: $0 ssl-proxy"
-    exit 1
+if [ -f "/opt/gokku/letsencrypt/lib/functions.sh" ]; then
+    # shellcheck disable=SC1091
+    source /opt/gokku/letsencrypt/lib/functions.sh
 fi
 
-echo "-----> Let's Encrypt service status: $SERVICE_NAME"
-
-# Check if service exists
-SERVICE_DIR="/opt/gokku/services/$SERVICE_NAME"
-if [ ! -d "$SERVICE_DIR" ]; then
-    echo "-----> Service '$SERVICE_NAME' not found"
-    exit 1
+if command -v list_ssl_dirs >/dev/null 2>&1; then
+    mapfile -t ssl_dirs < <(list_ssl_dirs)
+else
+    ssl_dirs=()
+    if [ -d "$SERVICES_ROOT" ]; then
+        while IFS= read -r -d '' dir; do
+            ssl_dirs+=("$dir")
+        done < <(find "$SERVICES_ROOT" -mindepth 2 -maxdepth 2 -type d -name ssl -print0 2>/dev/null)
+    fi
 fi
 
-# Show service information
-echo "-----> Service Information:"
-echo "       Service: $SERVICE_NAME"
-echo "       Directory: $SERVICE_DIR"
-echo "       Status: Installed"
-
-# Check certificates
-CERTS_DIR="$SERVICE_DIR/certs"
-if [ -d "$CERTS_DIR" ] && [ "$(ls -A "$CERTS_DIR" 2>/dev/null)" ]; then
-    echo "-----> Certificates:"
-    cert_count=0
-    for domain_dir in "$CERTS_DIR"/*; do
-        if [ -d "$domain_dir" ]; then
-            domain=$(basename "$domain_dir")
-            cert_count=$((cert_count + 1))
-
-            if [ -f "$domain_dir/fullchain.pem" ] && [ -f "$domain_dir/privkey.pem" ]; then
-                echo "       $domain: Valid"
-
-                # Check expiry if openssl is available
-                if command -v openssl >/dev/null 2>&1; then
-                    expiry=$(openssl x509 -enddate -noout -in "$domain_dir/fullchain.pem" 2>/dev/null | cut -d= -f2)
-                    if [ -n "$expiry" ]; then
-                        echo "         Expires: $expiry"
-
-                        # Calculate days until expiry
-                        expiry_timestamp=$(date -d "$expiry" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$expiry" +%s 2>/dev/null)
-                        if [ -n "$expiry_timestamp" ]; then
-                            current_timestamp=$(date +%s)
-                            days_until_expiry=$(( (expiry_timestamp - current_timestamp) / 86400 ))
-
-                            if [ $days_until_expiry -gt 0 ]; then
-                                echo "         Days until expiry: $days_until_expiry"
-
-                                if [ $days_until_expiry -lt 30 ]; then
-                                    echo "         WARNING: Certificate expires in less than 30 days!"
-                                fi
-                            else
-                                echo "         WARNING: Certificate has expired!"
-                            fi
-                        fi
-                    fi
-                fi
-            else
-                echo "       $domain: Incomplete (missing files)"
+if command -v list_ssl_services >/dev/null 2>&1; then
+    mapfile -t linked_services_overview < <(list_ssl_services)
+else
+    linked_services_overview=()
+    if [ ${#ssl_dirs[@]} -gt 0 ]; then
+        for ssl_dir in "${ssl_dirs[@]}"; do
+            service_name=$(basename "$(dirname "$ssl_dir")")
+            if compgen -G "$ssl_dir"/*.crt > /dev/null 2>&1; then
+                case " ${linked_services_overview[*]} " in
+                    *" $service_name "*) ;;
+                    *) linked_services_overview+=("$service_name") ;;
+                esac
             fi
-        fi
-    done
-
-    if [ $cert_count -eq 0 ]; then
-        echo "       No certificates found"
-        echo "       Run 'gokku letsencrypt:create $SERVICE_NAME <domain>' to create certificates"
+        done
     fi
-else
-    echo "-----> Certificates: None"
-    echo "       Run 'gokku letsencrypt:create $SERVICE_NAME <domain>' to create certificates"
 fi
 
-# Check nginx integration
-if [ -f "$SERVICE_DIR/nginx-service" ]; then
-    nginx_service=$(cat "$SERVICE_DIR/nginx-service")
-    echo "-----> Nginx Integration:"
-    echo "       Linked to: $nginx_service"
+if [ -n "$SERVICE_FILTER" ]; then
+    echo "-----> Let's Encrypt plugin status: $SERVICE_FILTER"
+else
+    echo "-----> Let's Encrypt plugin status"
+fi
 
-    # Check if nginx service exists and is running
-    if container_exists "$nginx_service"; then
-        if container_is_running "$nginx_service"; then
-            echo "       Nginx status: Running"
-        else
-            echo "       Nginx status: Stopped"
-        fi
-    else
-        echo "       Nginx status: Not found"
+# Check plugin installation
+if [ ! -d "$PLUGIN_DIR" ]; then
+    echo "-----> Plugin not installed"
+    echo "       Run 'gokku letsencrypt:install' to install the plugin"
+    exit 1
+fi
+
+echo "-----> Plugin Information:"
+echo "       Directory: $PLUGIN_DIR"
+echo "       Certificates: $CERTS_DIR"
+echo "       Logs: $LOGS_DIR"
+
+# Extract version from config if available
+if [ -f "$CONFIG_FILE" ]; then
+    plugin_version=$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" 2>/dev/null | head -n1 | cut -d'"' -f4)
+    if [ -n "$plugin_version" ]; then
+        echo "       Version: $plugin_version"
     fi
-else
-    echo "-----> Nginx Integration: Not linked"
-    echo "       Run 'gokku letsencrypt:link-nginx $SERVICE_NAME <nginx-service>' to link"
 fi
 
-# Check auto-renewal
-if [ -f "/etc/cron.d/gokku-letsencrypt-$SERVICE_NAME" ]; then
-    echo "-----> Auto-renewal: Enabled"
-    echo "       Cron job: /etc/cron.d/gokku-letsencrypt-$SERVICE_NAME"
-
-    # Check if renewal script exists
-    if [ -f "$SERVICE_DIR/renew-certificates.sh" ]; then
-        echo "       Renewal script: Available"
-    else
-        echo "       Renewal script: Missing"
+if [ -f "$PLUGIN_CONF" ]; then
+    plugin_status=$(grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' "$PLUGIN_CONF" 2>/dev/null | head -n1 | cut -d'"' -f4)
+    if [ -n "$plugin_status" ]; then
+        echo "       State: $plugin_status"
     fi
-else
-    echo "-----> Auto-renewal: Disabled"
-    echo "       Run 'gokku letsencrypt:auto-renew $SERVICE_NAME' to enable"
-fi
-
-# Check service configuration
-if [ -f "$SERVICE_DIR/service.conf" ]; then
-    echo "-----> Configuration: Available"
-    echo "       Config file: $SERVICE_DIR/service.conf"
-else
-    echo "-----> Configuration: Missing"
-fi
-
-# Check logs
-if [ -d "$SERVICE_DIR/logs" ] && [ "$(ls -A "$SERVICE_DIR/logs" 2>/dev/null)" ]; then
-    echo "-----> Logs: Available"
-    echo "       Log directory: $SERVICE_DIR/logs"
-else
-    echo "-----> Logs: None"
 fi
 
 echo ""
-echo "-----> Service status complete"
+
+# Gather certificate information
+echo "-----> Certificates:"
+if [ -d "$CERTS_DIR" ] && compgen -G "$CERTS_DIR/*" > /dev/null; then
+    cert_count=0
+    warning_count=0
+    expired_count=0
+
+    while IFS= read -r -d '' domain_dir; do
+        domain=$(basename "$domain_dir")
+        fullchain="$domain_dir/fullchain.pem"
+        privkey="$domain_dir/privkey.pem"
+        cert_count=$((cert_count + 1))
+
+        if [ -f "$fullchain" ] && [ -f "$privkey" ]; then
+            status_label="Valid"
+            expiry=""
+            days_until_expiry=""
+
+            if command -v openssl >/dev/null 2>&1; then
+                expiry=$(openssl x509 -enddate -noout -in "$fullchain" 2>/dev/null | cut -d= -f2)
+                if [ -n "$expiry" ]; then
+                    expiry_timestamp=$(date -d "$expiry" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$expiry" +%s 2>/dev/null)
+                    if [ -n "$expiry_timestamp" ]; then
+                        current_timestamp=$(date +%s)
+                        days_until_expiry=$(( (expiry_timestamp - current_timestamp) / 86400 ))
+                        if [ $days_until_expiry -lt 0 ]; then
+                            status_label="Expired"
+                            expired_count=$((expired_count + 1))
+                        elif [ $days_until_expiry -lt 30 ]; then
+                            warning_count=$((warning_count + 1))
+                        fi
+                    fi
+                fi
+            fi
+
+            echo "       $domain:"
+            echo "         Status: $status_label"
+            if [ -n "$expiry" ]; then
+                echo "         Expires: $expiry"
+            fi
+            if [ -n "$days_until_expiry" ]; then
+                echo "         Days until expiry: $days_until_expiry"
+            fi
+        else
+            echo "       $domain:"
+            echo "         Status: Incomplete (certificate files missing)"
+        fi
+
+        # Identify linked nginx services for this domain
+        linked_services=()
+        if [ ${#ssl_dirs[@]} -gt 0 ]; then
+            for ssl_dir in "${ssl_dirs[@]}"; do
+                service_name=$(basename "$(dirname "$ssl_dir")")
+                cert_path="$ssl_dir/$domain.crt"
+                if [ -L "$cert_path" ]; then
+                    target=$(readlink "$cert_path")
+                    if [ "$target" = "$domain_dir/fullchain.pem" ] || [[ "$target" == "$CERTS_DIR/$domain/"* ]]; then
+                        case " ${linked_services[*]} " in
+                            *" $service_name "*) ;;
+                            *) linked_services+=("$service_name") ;;
+                        esac
+                    fi
+                elif [ -f "$cert_path" ]; then
+                    case " ${linked_services[*]} " in
+                        *" $service_name "*) ;;
+                        *) linked_services+=("$service_name") ;;
+                    esac
+                fi
+            done
+        fi
+
+        if [ ${#linked_services[@]} -gt 0 ]; then
+            unique_services=()
+            for svc in "${linked_services[@]}"; do
+                skip=false
+                for seen in "${unique_services[@]}"; do
+                    if [ "$svc" = "$seen" ]; then
+                        skip=true
+                        break
+                    fi
+                done
+                if ! $skip; then
+                    unique_services+=("$svc")
+                fi
+            done
+            echo "         Linked services: ${unique_services[*]}"
+        fi
+
+        if [ -n "$SERVICE_FILTER" ]; then
+            nginx_ssl_dir="$SERVICES_ROOT/$SERVICE_FILTER/ssl"
+            if [ -d "$nginx_ssl_dir" ]; then
+                if [ -L "$nginx_ssl_dir/$domain.crt" ] || [ -f "$nginx_ssl_dir/$domain.crt" ]; then
+                    echo "         Service link: present in $nginx_ssl_dir"
+                else
+                    echo "         Service link: missing in $nginx_ssl_dir"
+                fi
+            fi
+        fi
+
+        echo ""
+    done < <(find "$CERTS_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+
+    echo "       Total certificates: $cert_count"
+    if [ $warning_count -gt 0 ]; then
+        echo "       Warnings: $warning_count certificate(s) expiring in less than 30 days"
+    fi
+    if [ $expired_count -gt 0 ]; then
+        echo "       Alerts: $expired_count expired certificate(s)"
+    fi
+else
+    echo "       None found"
+    echo "       Run 'gokku letsencrypt:create <domain>' to create certificates"
+fi
+
+echo ""
+
+# Service integration overview
+echo "-----> Service Integration:"
+if [ ${#linked_services_overview[@]} -gt 0 ]; then
+    for nginx_service in "${linked_services_overview[@]}"; do
+        nginx_dir="$SERVICES_ROOT/$nginx_service"
+        nginx_ssl_dir="$nginx_dir/ssl"
+
+        if [ ! -d "$nginx_dir" ]; then
+            echo "       $nginx_service: service directory missing"
+            continue
+        fi
+
+        if [ ! -d "$nginx_ssl_dir" ]; then
+            echo "       $nginx_service: ssl directory missing"
+            continue
+        fi
+
+        echo "       $nginx_service: linked"
+        if [ -n "$SERVICE_FILTER" ] && [ "$SERVICE_FILTER" = "$nginx_service" ]; then
+            echo "         SSL directory: $nginx_ssl_dir"
+            if [ -r "$nginx_ssl_dir" ]; then
+                ls -1 "$nginx_ssl_dir" 2>/dev/null | sed 's/^/           /'
+            else
+                echo "           (not readable)"
+            fi
+        fi
+    done
+else
+    echo "       No services linked"
+    echo "       Run 'gokku letsencrypt:link-nginx <service-name>' to link certificates"
+fi
+
+echo ""
+
+# Service-specific SSL symlink details
+if [ -n "$SERVICE_FILTER" ]; then
+    service_dir="$SERVICES_ROOT/$SERVICE_FILTER"
+    service_ssl_dir="$service_dir/ssl"
+    echo "-----> Service '$SERVICE_FILTER' SSL:"
+    if [ -d "$service_ssl_dir" ] && compgen -G "$service_ssl_dir"/*.crt > /dev/null 2>&1; then
+        for cert_path in "$service_ssl_dir"/*.crt; do
+            [ -e "$cert_path" ] || continue
+            domain=$(basename "$cert_path" .crt)
+            key_path="$service_ssl_dir/$domain.key"
+
+            echo "       $domain:"
+            if [ -L "$cert_path" ]; then
+                cert_target=$(readlink "$cert_path")
+                echo "         Certificate symlink: $cert_path -> $cert_target"
+            else
+                echo "         Certificate file: $cert_path"
+            fi
+
+            if [ -f "$key_path" ]; then
+                if [ -L "$key_path" ]; then
+                    key_target=$(readlink "$key_path")
+                    echo "         Key symlink: $key_path -> $key_target"
+                else
+                    echo "         Key file: $key_path"
+                fi
+            else
+                echo "         Key missing: $key_path"
+            fi
+        done
+    else
+        echo "       No SSL certificates linked"
+    fi
+
+    echo ""
+fi
+
+# Auto-renewal status
+echo "-----> Auto-renewal:"
+if [ -f "$GLOBAL_CRON_FILE" ]; then
+    echo "       Enabled (global cron job present)"
+    echo "       Cron file: $GLOBAL_CRON_FILE"
+
+    if [ -f "$PLUGIN_DIR/renew-certificates.sh" ]; then
+        echo "       Renewal script: $PLUGIN_DIR/renew-certificates.sh"
+    fi
+else
+    echo "       Disabled"
+    echo "       Run 'gokku letsencrypt:auto-renew' to enable"
+fi
+
+echo ""
+
+# Logs overview
+echo "-----> Logs:"
+if [ -d "$LOGS_DIR" ] && compgen -G "$LOGS_DIR/*" > /dev/null; then
+    echo "       Plugin log directory: $LOGS_DIR"
+    if [ -r "$LOGS_DIR/letsencrypt.log" ]; then
+        echo "       Latest entries from letsencrypt.log:"
+        tail -n 5 "$LOGS_DIR/letsencrypt.log" 2>/dev/null | sed 's/^/         /'
+    elif [ -f "$LOGS_DIR/letsencrypt.log" ]; then
+        echo "       letsencrypt.log present but not readable"
+    fi
+else
+    echo "       Plugin logs not found"
+fi
+
+if [ -f "/var/log/gokku-letsencrypt.log" ]; then
+    echo "       Renewal log: /var/log/gokku-letsencrypt.log"
+fi
+
+if [ -n "$SERVICE_FILTER" ]; then
+    service_dir="/opt/gokku/services/$SERVICE_FILTER"
+    if [ -d "$service_dir/logs" ]; then
+        echo "       Service log directory: $service_dir/logs"
+    fi
+    if [ -f "/var/log/gokku-letsencrypt-$SERVICE_FILTER.log" ]; then
+        echo "       Service renewal log: /var/log/gokku-letsencrypt-$SERVICE_FILTER.log"
+    fi
+fi
+
+echo ""
+echo "-----> Status inspection complete"
