@@ -102,15 +102,17 @@ fi
 
 # Create cron job
 CRON_FILE="/etc/cron.d/gokku-letsencrypt"
+
+# Set proper permissions
+sudo touch "$CRON_FILE"
+sudo chown "$(whoami):$(whoami)" "$CRON_FILE" 2>/dev/null || true
+sudo chmod 644 "$CRON_FILE"
+
 sudo cat > "$CRON_FILE" << EOF
 # Auto-renewal for Let's Encrypt plugin
 # Runs every day at 2:30 AM
 30 2 * * * root $RENEWAL_SCRIPT >> /var/log/gokku-letsencrypt.log 2>&1
 EOF
-
-# Set proper permissions
-sudo chown "$(whoami):$(whoami)" "$CRON_FILE" 2>/dev/null || true
-sudo chmod 644 "$CRON_FILE"
 
 echo "-----> Auto-renewal configured successfully"
 echo "       Cron file: $CRON_FILE"
